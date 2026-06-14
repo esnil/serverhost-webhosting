@@ -1,0 +1,18 @@
+services:
+  hello:
+    image: nginx:alpine
+    restart: unless-stopped
+    volumes:
+      - ./html:/usr/share/nginx/html:ro
+    networks:
+      - proxy
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.hello.rule=Host(`hello.vps.encab.se`)"
+      - "traefik.http.routers.hello.entrypoints=websecure"
+      - "traefik.http.routers.hello.tls.certresolver=letsencrypt"
+      - "traefik.http.services.hello.loadbalancer.server.port=80"
+
+networks:
+  proxy:
+    external: true

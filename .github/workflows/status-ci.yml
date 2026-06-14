@@ -1,0 +1,36 @@
+name: status-ci
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - apps/status/**
+  pull_request:
+    paths:
+      - apps/status/**
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Login to GHCR
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+
+      - name: Build image
+        run: |
+          docker build apps/status \
+            -t ghcr.io/${{ github.repository }}/status:${{ github.sha }} \
+            -t ghcr.io/${{ github.repository }}/status:main
+
+      - name: Push image
+        if: github.ref == 'refs/heads/main'
+        run: |
+          docker push ghcr.io/${{ github.repository }}/status:${{ github.sha }}
+          docker push ghcr.io/${{ github.repository }}/status:main

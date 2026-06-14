@@ -1,0 +1,30 @@
+name: status-deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: "Image tag att deploya (t.ex. main eller commit-sha)"
+        required: true
+        default: "main"
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Configure SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.VPS_SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          echo "${{ secrets.VPS_KNOWN_HOSTS }}" > ~/.ssh/known_hosts
+
+      - name: Deploy over SSH
+        run: |
+          ssh -i ~/.ssh/deploy_key ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} '
+            cd /opt/hosting/apps/status &&
+            IMAGE_TAG=${{ inputs.image_tag }} docker compose pull &&
+            IMAGE_TAG=${{ inputs.image_tag }} docker compose up -d &&
+            docker image prune -f --filter "until=168h"
+          '

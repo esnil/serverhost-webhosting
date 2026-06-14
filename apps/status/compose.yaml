@@ -1,0 +1,33 @@
+services:
+  status:
+    image: ghcr.io/esnil/serverhost-webhosting/status:${IMAGE_TAG:-main}
+    restart: unless-stopped
+    networks:
+      - proxy
+      - monitoring
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.status.rule=Host(`hello.vps.encab.se`)"
+      - "traefik.http.routers.status.entrypoints=websecure"
+      - "traefik.http.routers.status.tls.certresolver=letsencrypt"
+      - "traefik.http.services.status.loadbalancer.server.port=80"
+      - "traefik.http.routers.status.middlewares=status-auth"
+      - "traefik.http.middlewares.status-auth.basicauth.users=${BASIC_AUTH_USERS}"
+
+  uptime-kuma:
+    image: louislam/uptime-kuma:1
+    container_name: uptime-kuma
+    restart: unless-stopped
+    volumes:
+      - uptime-kuma-data:/app/data
+    networks:
+      - monitoring
+
+volumes:
+  uptime-kuma-data:
+
+networks:
+  proxy:
+    external: true
+  monitoring:
+    internal: true

@@ -1,0 +1,5 @@
+*.Zone.Identifier
+.env
+node_modules/
+dist/
+traefik/letsencrypt/*.json

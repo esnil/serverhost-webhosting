@@ -1,0 +1,9 @@
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  min-height: 100vh;
+  background: #0f0f0f;
+  color: #e8e8e8;
+  font-family: "SF Mono", "Fira Code", "Consolas", monospace;
+  font-size: 14px;
+}
