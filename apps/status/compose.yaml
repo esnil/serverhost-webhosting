@@ -11,8 +11,7 @@ services:
       - "traefik.http.routers.status.entrypoints=websecure"
       - "traefik.http.routers.status.tls.certresolver=letsencrypt"
       - "traefik.http.services.status.loadbalancer.server.port=80"
-      - "traefik.http.routers.status.middlewares=status-auth"
-      - "traefik.http.middlewares.status-auth.basicauth.users=${BASIC_AUTH_USERS}"
+      - "traefik.http.routers.status.middlewares=status-auth@file"
 
   uptime-kuma:
     image: louislam/uptime-kuma:1
@@ -21,7 +20,15 @@ services:
     volumes:
       - uptime-kuma-data:/app/data
     networks:
+      - proxy
       - monitoring
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.uptime.rule=Host(`uptime.vps.encab.se`)"
+      - "traefik.http.routers.uptime.entrypoints=websecure"
+      - "traefik.http.routers.uptime.tls.certresolver=letsencrypt"
+      - "traefik.http.services.uptime.loadbalancer.server.port=3001"
+      - "traefik.http.routers.uptime.middlewares=status-auth@file"
 
 volumes:
   uptime-kuma-data:

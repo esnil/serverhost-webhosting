@@ -27,9 +27,27 @@
   color: #fff;
 }
 
+.headerRight {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
 .overall {
   font-size: 0.8rem;
   color: #aaa;
+}
+
+.adminLink {
+  font-size: 1rem;
+  color: #333;
+  text-decoration: none;
+  line-height: 1;
+  transition: color 0.15s;
+}
+
+.adminLink:hover {
+  color: #888;
 }
 
 .main {

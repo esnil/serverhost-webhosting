@@ -68,16 +68,21 @@ export default function App() {
       <header className={styles.header}>
         <div className={styles.headerInner}>
           <span className={styles.site}>encab.se</span>
-          <div className={styles.overall}>
-            {error ? (
-              <span style={{ color: STATUS.UNKNOWN.color }}>● ej ansluten</span>
-            ) : monitors.length === 0 ? (
-              <span style={{ color: STATUS.UNKNOWN.color }}>● inga tjänster konfigurerade</span>
-            ) : allUp ? (
-              <span style={{ color: STATUS.UP.color }}>● alla tjänster fungerar</span>
-            ) : (
-              <span style={{ color: STATUS.DOWN.color }}>● driftstörning pågår</span>
-            )}
+          <div className={styles.headerRight}>
+            <div className={styles.overall}>
+              {error ? (
+                <span style={{ color: STATUS.UNKNOWN.color }}>● ej ansluten</span>
+              ) : monitors.length === 0 ? (
+                <span style={{ color: STATUS.UNKNOWN.color }}>● inga tjänster konfigurerade</span>
+              ) : allUp ? (
+                <span style={{ color: STATUS.UP.color }}>● alla tjänster fungerar</span>
+              ) : (
+                <span style={{ color: STATUS.DOWN.color }}>● driftstörning pågår</span>
+              )}
+            </div>
+            <a href="https://uptime.vps.encab.se" className={styles.adminLink} title="Uptime Kuma admin">
+              ⚙
+            </a>
           </div>
         </div>
       </header>
