@@ -5,7 +5,7 @@ Dockeriserad VPS-hostingplattform. En enkel, reproducerbar och Git-styrd VPS dä
 ## Arkitektur
 
 ```
-GitHub repo → GitHub Actions → GHCR → VPS (Docker Compose + Traefik)
+GitHub repo → GitHub Actions (lint + build + push) → GHCR → VPS (docker compose pull + up + traefik restart)
 ```
 
 VPS:en bygger aldrig images själv. GitHub Actions bygger, pushar till GHCR, VPS:en hämtar färdig image och startar om appen.
@@ -20,46 +20,78 @@ VPS:en bygger aldrig images själv. GitHub Actions bygger, pushar till GHCR, VPS
 | HTTPS | Let's Encrypt via Traefik |
 | Registry | GitHub Container Registry (GHCR) |
 | CI/CD | GitHub Actions |
+| Övervakning | Uptime Kuma på `uptime.vps.encab.se` |
 
-## Repostruktur
+## Faktisk repostruktur
 
 ```
 serverhost-webhosting/
-  README.md
+  CLAUDE.md
   docs/
-    runbook.md
-    security.md
-    backup.md
-    app-template.md
+    deploy-guide.md        # Guide för att driftsätta ny app
   scripts/
     01-create-deploy-user.sh
     02-install-docker.sh
     03-create-docker-networks.sh
     04-install-traefik.sh
-  traefik/
-    compose.yaml
-    traefik.yaml
-    dynamic/
-    letsencrypt/
-      .gitkeep
   apps/
-    hello/
-      compose.yaml
-      .env.example
-  templates/
-    app/
+    status/                # React-statusfrontend, live på hello.vps.encab.se
       Dockerfile
       compose.yaml
-      compose.prod.yaml
-      .env.example
+      nginx.conf
+      eslint.config.js
+      package.json
+      src/
+        App.jsx
+        App.module.css
+        index.css
+        main.jsx
       .github/
         workflows/
-          ci.yml
-          deploy.yml
-          ghcr-retention.yml
+          status-ci.yml    # lint + docker build + push till GHCR
+          status-deploy.yml # workflow_dispatch deploy via SSH
+    hello/                 # Arkiverat nginx-exempel (används ej i produktion)
+      compose.yaml
+    uptime-kuma/           # Uptime Kuma (ingår i apps/status/compose.yaml, inte egen deploy)
+      compose.yaml
 ```
 
 På VPS:en lever allt under `/opt/hosting/`.
+
+## Produktionsmiljö
+
+| Tjänst | URL | Beskrivning |
+|---|---|---|
+| Status-frontend | `hello.vps.encab.se` | React-app med Uptime Kuma-data, BasicAuth |
+| Uptime Kuma | `uptime.vps.encab.se` | Monitoringpanel, egen autentisering |
+
+Uptime Kuma och status-appen deployas tillsammans via `apps/status/compose.yaml`.
+
+## Deploy-flöde
+
+**GitHub Actions är primär deploy-metod. Använd alltid det i första hand.**
+
+```
+push till main → status-ci.yml → lint → docker build → push till GHCR
+                                                              ↓
+                                         status-deploy.yml (workflow_dispatch)
+                                         → SSH → docker compose pull + up -d + docker restart traefik
+```
+
+Trigga deploy: GitHub → Actions → status-deploy → Run workflow → image_tag: `main`
+
+SSH-deploy (fallback om Actions inte är tillgängligt):
+```bash
+ssh deploy@217.154.83.127 '
+  cd /opt/hosting/apps/status &&
+  IMAGE_TAG=main docker compose pull &&
+  IMAGE_TAG=main docker compose up -d &&
+  docker image prune -f --filter "until=168h" &&
+  docker restart traefik
+'
+```
+
+**OBS:** `docker restart traefik` är obligatoriskt efter varje app-deploy. `docker compose up -d` återskapar containern med ny intern IP — Traefik håller kvar TCP-connections till gamla IP:n och hänger utan timeout. Traefik-omstarten rensar connection pool och förhindrar att sidan ser ut att vara nere direkt efter deploy.
 
 ## Nyckelprinciper
 
@@ -67,41 +99,45 @@ På VPS:en lever allt under `/opt/hosting/`.
 
 **Secrets:** `.env.example` checkas in, `.env` aldrig. GitHub Secrets: `VPS_HOST`, `VPS_USER`, `VPS_SSH_KEY`, `VPS_KNOWN_HOSTS`. Ingen `StrictHostKeyChecking=no`.
 
-**Image-taggar:** `latest`, `main`, `<commit-sha>`, `v*`. Rollback = manuell deploy med äldre commit-sha-tagg.
+**Image-taggar:** `main` (senaste main-build), `<commit-sha>` (exakt version). Rollback = manuell deploy med äldre commit-sha-tagg.
+
+**BasicAuth:** Lägg aldrig hash i Docker-labels eller `.env` — `$`-tecken expanderas av Docker Compose. Använd alltid Traefik dynamic config: `/opt/hosting/traefik/dynamic/<app>-auth.yaml` med `@file`-referens i labels.
+
+**Linting:** Alla frontend-appar ska ha ESLint konfigurerat. CI-jobbet kör lint INNAN Docker-build för snabb feedback. `npm run lint` ska vara rent innan push.
 
 **Databas:** Börja med en container per app (isolerat, lätt att flytta/ta bort).
-
-**Retention:** Tre nivåer — GHCR (behåll latest/main/v*, senaste 20 SHA), VPS (`docker image prune -f --filter "until=168h"` efter deploy), GitHub Actions artifacts (7–14 dagar).
 
 ## Traefik-labels (standardmönster)
 
 ```yaml
 labels:
   - "traefik.enable=true"
-  - "traefik.http.routers.<app>.rule=Host(`<app>.example.com`)"
+  - "traefik.http.routers.<app>.rule=Host(`<app>.vps.encab.se`)"
   - "traefik.http.routers.<app>.entrypoints=websecure"
   - "traefik.http.routers.<app>.tls.certresolver=letsencrypt"
-  - "traefik.http.services.<app>.loadbalancer.server.port=3000"
+  - "traefik.http.services.<app>.loadbalancer.server.port=<port>"
 ```
 
 Alla appar kopplas till det externa nätverket `proxy`.
 
-## Deploy-flöde
+## CI/CD-mönster per app
 
-Lokalt: `docker compose up --build`
+Varje app har två workflows:
 
-Produktion: `docker compose -f compose.yaml -f compose.prod.yaml up -d`
+**`<app>-ci.yml`** — triggas på push till main:
+1. `lint` — kör `npm run lint` (eller motsvarande)
+2. `build` (behöver lint) — `docker build` + `docker push` till GHCR
 
-Manuell deploy triggas via `workflow_dispatch` i GitHub Actions med input `image_tag`.
+**`<app>-deploy.yml`** — `workflow_dispatch` med `image_tag`-input:
+1. SSH till VPS
+2. `docker compose pull && docker compose up -d`
+3. `docker image prune`
+4. `docker restart traefik`
 
-## Rekommenderad byggnadsordning
+## Viktiga sökvägar
 
-1. Scripts för VPS-bas (användare, Docker, nätverk)
-2. Traefik-konfiguration
-3. Testapp `hello` (verifierar DNS, HTTPS, Traefik, logs)
-4. App-template
-5. CI-workflow (bygg + push till GHCR)
-6. Deploy-workflow (SSH + `workflow_dispatch`)
-7. GHCR-retention workflow
-8. Backup-script
-9. Enkel övervakning (Uptime Kuma)
+| Sökväg | Innehåll |
+|---|---|
+| `/opt/hosting/traefik/` | Traefik-konfiguration |
+| `/opt/hosting/traefik/dynamic/auth.yaml` | BasicAuth-middleware |
+| `/opt/hosting/apps/<app>/` | compose.yaml + .env per app |

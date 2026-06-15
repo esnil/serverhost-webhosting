@@ -17,8 +17,10 @@ Den här guiden beskriver hur appar byggs, publiceras och körs på vår Docker-
 
 **Grundprincipen:** Appen byggs aldrig på VPS:en. GitHub Actions bygger Docker-imagen, pushar till GHCR, och VPS:en hämtar den färdiga imagen.
 
+**GitHub Actions är primär deploy-metod.** Trigga deploy via Actions → \<app\>-deploy → Run workflow. Manuell SSH-deploy är fallback.
+
 ```
-kod → GitHub Actions → GHCR → VPS (docker compose pull + up)
+kod → GitHub Actions (lint + build + push) → GHCR → VPS (docker compose pull + up + docker restart traefik)
 ```
 
 ---
@@ -144,22 +146,48 @@ networks:
 
 ## GitHub Actions: CI
 
-Sökväg: `.github/workflows/ci.yml`
+Sökväg: `.github/workflows/<appnamn>-ci.yml`
+
+CI-workflowet ska ha två jobb: `lint` och `build`. Build beror på lint — om lint misslyckas körs aldrig Docker-bygget.
 
 ```yaml
-name: ci
+name: <appnamn>-ci
 
 on:
   push:
     branches: [main]
+    paths:
+      - apps/<appnamn>/**
   pull_request:
+    paths:
+      - apps/<appnamn>/**
 
 permissions:
   contents: read
   packages: write
 
 jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: apps/<appnamn>/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+        working-directory: apps/<appnamn>
+
+      - name: Lint
+        run: npm run lint
+        working-directory: apps/<appnamn>
+
   build:
+    needs: lint
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -167,18 +195,20 @@ jobs:
       - name: Login to GHCR
         run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
 
-      - name: Build and push
+      - name: Build image
         run: |
-          docker build . \
-            -t ghcr.io/${{ github.repository }}:${{ github.sha }} \
-            -t ghcr.io/${{ github.repository }}:main
-          if [ "${{ github.ref }}" = "refs/heads/main" ]; then
-            docker push ghcr.io/${{ github.repository }}:${{ github.sha }}
-            docker push ghcr.io/${{ github.repository }}:main
-          fi
+          docker build apps/<appnamn> \
+            -t ghcr.io/${{ github.repository }}/<appnamn>:${{ github.sha }} \
+            -t ghcr.io/${{ github.repository }}/<appnamn>:main
+
+      - name: Push image
+        if: github.ref == 'refs/heads/main'
+        run: |
+          docker push ghcr.io/${{ github.repository }}/<appnamn>:${{ github.sha }}
+          docker push ghcr.io/${{ github.repository }}/<appnamn>:main
 ```
 
-Om `Dockerfile` inte ligger i repo-roten, byt `docker build .` mot `docker build <sökväg>`.
+**Viktigt för Node-projekt:** Committa `package-lock.json` och sätt upp `eslint` med `npm run lint` i package.json innan workflows pushas.
 
 **Viktigt för Node-projekt:** Committa `package-lock.json` innan du pushar — `npm ci` i Dockerfile kräver den och CI-bygget kraschar annars. Kör `npm install` lokalt och committa filen.
 
@@ -290,15 +320,25 @@ Let's Encrypt-certifikatet skapas automatiskt första gången Traefik ser en req
 
 ---
 
-## Manuell deploy (utan GitHub Actions)
+## Deploy via GitHub Actions (primär metod)
+
+Trigga via GitHub → Actions → `<appnamn>-deploy` → Run workflow → image_tag: `main`
+
+---
+
+## Manuell deploy (fallback om Actions inte är tillgängligt)
 
 ```bash
 ssh deploy@217.154.83.127 '
   cd /opt/hosting/apps/<appnamn> &&
   IMAGE_TAG=main docker compose pull &&
-  IMAGE_TAG=main docker compose up -d
+  IMAGE_TAG=main docker compose up -d &&
+  docker image prune -f --filter "until=168h" &&
+  docker restart traefik
 '
 ```
+
+**OBS:** `docker restart traefik` är obligatoriskt. `docker compose up -d` återskapar containern med ny intern IP — utan Traefik-omstart hänger requests tills stale TCP-connections töms (kan ta >30s).
 
 ---
 
@@ -310,7 +350,8 @@ Byt `main` mot en specifik commit-SHA:
 ssh deploy@217.154.83.127 '
   cd /opt/hosting/apps/<appnamn> &&
   IMAGE_TAG=<commit-sha> docker compose pull &&
-  IMAGE_TAG=<commit-sha> docker compose up -d
+  IMAGE_TAG=<commit-sha> docker compose up -d &&
+  docker restart traefik
 '
 ```
 
@@ -321,8 +362,9 @@ ssh deploy@217.154.83.127 '
 - [ ] `Dockerfile` skapad och testad lokalt
 - [ ] `compose.yaml` med korrekta Traefik-labels och `proxy`-nätverket
 - [ ] `.env.example` med alla variabler (tomma värden)
+- [ ] `eslint.config.js` och `"lint": "eslint src"` i package.json (för Node-appar)
 - [ ] `package-lock.json` (eller motsvarande lock-fil) committat
-- [ ] `.github/workflows/ci.yml` och `deploy.yml` skapade
+- [ ] `.github/workflows/<appnamn>-ci.yml` (lint + build) och `<appnamn>-deploy.yml` skapade
 - [ ] GitHub Secrets `VPS_HOST`, `VPS_USER`, `VPS_SSH_KEY`, `VPS_KNOWN_HOSTS` inlagda
 - [ ] DNS-record skapad hos Loopia
 - [ ] Katalog `/opt/hosting/apps/<appnamn>/` skapad på VPS
