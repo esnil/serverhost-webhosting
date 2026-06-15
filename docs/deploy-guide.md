@@ -216,7 +216,8 @@ jobs:
             cd /opt/hosting/apps/<appnamn> &&
             IMAGE_TAG=${{ inputs.image_tag }} docker compose pull &&
             IMAGE_TAG=${{ inputs.image_tag }} docker compose up -d &&
-            docker image prune -f --filter "until=168h"
+            docker image prune -f --filter "until=168h" &&
+            docker restart traefik
           '
 ```
 
