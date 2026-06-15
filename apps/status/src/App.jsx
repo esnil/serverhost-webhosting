@@ -80,6 +80,9 @@ export default function App() {
                 <span style={{ color: STATUS.DOWN.color }}>● driftstörning pågår</span>
               )}
             </div>
+            <a href="https://uptime.vps.encab.se/status/main" className={styles.adminLink} title="Visa dashboard">
+              ↗
+            </a>
             <a href="https://uptime.vps.encab.se" className={styles.adminLink} title="Uptime Kuma admin">
               ⚙
             </a>
