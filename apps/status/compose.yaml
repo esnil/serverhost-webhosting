@@ -28,7 +28,6 @@ services:
       - "traefik.http.routers.uptime.entrypoints=websecure"
       - "traefik.http.routers.uptime.tls.certresolver=letsencrypt"
       - "traefik.http.services.uptime.loadbalancer.server.port=3001"
-      - "traefik.http.routers.uptime.middlewares=status-auth@file"
 
 volumes:
   uptime-kuma-data:
