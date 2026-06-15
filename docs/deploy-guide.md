@@ -180,6 +180,8 @@ jobs:
 
 Om `Dockerfile` inte ligger i repo-roten, byt `docker build .` mot `docker build <sökväg>`.
 
+**Viktigt för Node-projekt:** Committa `package-lock.json` innan du pushar — `npm ci` i Dockerfile kräver den och CI-bygget kraschar annars. Kör `npm install` lokalt och committa filen.
+
 ---
 
 ## GitHub Actions: Deploy
@@ -228,30 +230,50 @@ jobs:
 |---|---|
 | `VPS_HOST` | `217.154.83.127` |
 | `VPS_USER` | `deploy` |
-| `VPS_SSH_KEY` | Privat SSH-nyckel (hämtas från eskil) |
-| `VPS_KNOWN_HOSTS` | Host keys för VPS:en (hämtas från eskil) |
+| `VPS_SSH_KEY` | Privat SSH-nyckel — se instruktion nedan |
+| `VPS_KNOWN_HOSTS` | Host key för VPS:en — se instruktion nedan |
 
 Läggs till under: `GitHub repo → Settings → Secrets and variables → Actions → New repository secret`
+
+### VPS_SSH_KEY
+
+Kör lokalt i WSL och kopiera hela utskriften inklusive `-----BEGIN`- och `-----END`-raderna:
+
+```bash
+cat ~/.ssh/id_ed25519
+```
+
+Klistra in exakt som det ser ut — radbrytningar måste vara med. Om formatet är fel får du felet `error in libcrypto` i Actions.
+
+### VPS_KNOWN_HOSTS
+
+Kör lokalt i WSL:
+
+```bash
+ssh-keyscan -t ed25519 217.154.83.127 2>/dev/null
+```
+
+Kopiera raden som börjar med `217.154.83.127 ssh-ed25519 ...` (inte kommentarsraden med `#`). En enda plain-rad räcker — använd inte det hashade formatet (`|1|...`) som `ssh-keyscan` kan producera med flaggan `-H`.
 
 ---
 
 ## Förbered VPS för ny app
 
-Skapa katalog och `.env`-fil på VPS:en (kör som deploy-användaren via SSH):
+Kör som deploy-användaren via SSH:
 
 ```bash
-mkdir -p /opt/hosting/apps/<appnamn>
+# Skapa katalog
+ssh deploy@217.154.83.127 "mkdir -p /opt/hosting/apps/<appnamn>"
+
 # Kopiera compose.yaml
-# Skapa .env med appens variabler
-```
+scp compose.yaml deploy@217.154.83.127:/opt/hosting/apps/<appnamn>/
 
-Secrets och miljövariabler läggs i `/opt/hosting/apps/<appnamn>/.env`. Den filen checkas aldrig in i Git — bara `.env.example` med tomma värden.
-
-**Skriv .env via SSH med printf (inte heredoc):**
-```bash
+# Skapa .env med appens variabler (använd printf — inte heredoc i SSH)
 printf 'DATABASE_URL=%s\nSECRET_KEY=%s\n' "$DB_URL" "$SECRET" \
   | ssh deploy@217.154.83.127 "cat > /opt/hosting/apps/<appnamn>/.env"
 ```
+
+Secrets och miljövariabler läggs i `/opt/hosting/apps/<appnamn>/.env`. Den filen checkas aldrig in i Git — bara `.env.example` med tomma värden.
 
 ---
 
@@ -303,6 +325,7 @@ ssh deploy@217.154.83.127 '
 - [ ] GitHub Secrets `VPS_HOST`, `VPS_USER`, `VPS_SSH_KEY`, `VPS_KNOWN_HOSTS` inlagda
 - [ ] DNS-record skapad hos Loopia
 - [ ] Katalog `/opt/hosting/apps/<appnamn>/` skapad på VPS
-- [ ] `.env` skapad på VPS med riktiga värden
+- [ ] `compose.yaml` kopierad till VPS (`scp compose.yaml deploy@217.154.83.127:/opt/hosting/apps/<appnamn>/`)
+- [ ] `.env` skapad på VPS med riktiga värden (via `printf ... | ssh ...`)
 - [ ] Första push till `main` → CI bygger och pushar image
-- [ ] Manuell deploy via `workflow_dispatch` eller SSH
+- [ ] Deploy via `Actions → deploy → Run workflow` med image_tag `main`
