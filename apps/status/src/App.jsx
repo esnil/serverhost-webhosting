@@ -59,7 +59,7 @@ export default function App() {
   }, [])
 
   const allUp = monitors.length > 0 && monitors.every(m => {
-    const hb = heartbeats[m.id]?.[0]
+    const beats = heartbeats[m.id] ?? []; const hb = beats[beats.length - 1]
     return statusOf(hb) === STATUS.UP
   })
 
@@ -99,7 +99,7 @@ export default function App() {
         )}
 
         {monitors.map(m => {
-          const hb = heartbeats[m.id]?.[0]
+          const beats = heartbeats[m.id] ?? []; const hb = beats[beats.length - 1]
           const s = statusOf(hb)
           return (
             <div key={m.id} className={styles.row}>
