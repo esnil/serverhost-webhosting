@@ -243,6 +243,7 @@ jobs:
       - name: Deploy
         run: |
           ssh -i ~/.ssh/deploy_key ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} '
+            echo "${{ secrets.GHCR_TOKEN }}" | docker login ghcr.io -u <github-användare> --password-stdin &&
             cd /opt/hosting/apps/<appnamn> &&
             IMAGE_TAG=${{ inputs.image_tag }} docker compose pull &&
             IMAGE_TAG=${{ inputs.image_tag }} docker compose up -d &&
@@ -251,7 +252,7 @@ jobs:
           '
 ```
 
-**Byt ut** `<appnamn>` mot appens katalognamn på VPS:en.
+**Byt ut** `<appnamn>` mot appens katalognamn och `<github-användare>` mot ditt GitHub-användarnamn.
 
 ---
 
@@ -263,6 +264,7 @@ jobs:
 | `VPS_USER` | `deploy` |
 | `VPS_SSH_KEY` | Privat SSH-nyckel — se instruktion nedan |
 | `VPS_KNOWN_HOSTS` | Host key för VPS:en — se instruktion nedan |
+| `GHCR_TOKEN` | Personal Access Token för GHCR-pull på VPS — se instruktion nedan |
 
 Läggs till under: `GitHub repo → Settings → Secrets and variables → Actions → New repository secret`
 
@@ -285,6 +287,19 @@ ssh-keyscan -t ed25519 217.154.83.127 2>/dev/null
 ```
 
 Kopiera raden som börjar med `217.154.83.127 ssh-ed25519 ...` (inte kommentarsraden med `#`). En enda plain-rad räcker — använd inte det hashade formatet (`|1|...`) som `ssh-keyscan` kan producera med flaggan `-H`.
+
+### GHCR_TOKEN
+
+GHCR-images är privata som standard. VPS:en behöver autentisera sig för att kunna köra `docker compose pull`.
+
+Skapa ett Personal Access Token (classic) på `github.com/settings/tokens`:
+
+- Note: valfritt namn, t.ex. `ghcr-read-vps`
+- Expiration: välj rimlig giltighetstid (t.ex. 1 år)
+- Scope: **`read:packages`** — inget annat behövs
+- Kopiera token direkt efter att den skapats (visas bara en gång)
+
+Lägg till tokensträngen som secret `GHCR_TOKEN` i repot.
 
 ---
 
@@ -330,6 +345,7 @@ Trigga via GitHub → Actions → `<appnamn>-deploy` → Run workflow → image_
 
 ```bash
 ssh deploy@217.154.83.127 '
+  echo "<GHCR_TOKEN>" | docker login ghcr.io -u <github-användare> --password-stdin &&
   cd /opt/hosting/apps/<appnamn> &&
   IMAGE_TAG=main docker compose pull &&
   IMAGE_TAG=main docker compose up -d &&
@@ -348,6 +364,7 @@ Byt `main` mot en specifik commit-SHA:
 
 ```bash
 ssh deploy@217.154.83.127 '
+  echo "<GHCR_TOKEN>" | docker login ghcr.io -u <github-användare> --password-stdin &&
   cd /opt/hosting/apps/<appnamn> &&
   IMAGE_TAG=<commit-sha> docker compose pull &&
   IMAGE_TAG=<commit-sha> docker compose up -d &&
@@ -365,7 +382,7 @@ ssh deploy@217.154.83.127 '
 - [ ] `eslint.config.js` och `"lint": "eslint src"` i package.json (för Node-appar)
 - [ ] `package-lock.json` (eller motsvarande lock-fil) committat
 - [ ] `.github/workflows/<appnamn>-ci.yml` (lint + build) och `<appnamn>-deploy.yml` skapade
-- [ ] GitHub Secrets `VPS_HOST`, `VPS_USER`, `VPS_SSH_KEY`, `VPS_KNOWN_HOSTS` inlagda
+- [ ] GitHub Secrets `VPS_HOST`, `VPS_USER`, `VPS_SSH_KEY`, `VPS_KNOWN_HOSTS`, `GHCR_TOKEN` inlagda
 - [ ] DNS-record skapad hos Loopia
 - [ ] Katalog `/opt/hosting/apps/<appnamn>/` skapad på VPS
 - [ ] `compose.yaml` kopierad till VPS (`scp compose.yaml deploy@217.154.83.127:/opt/hosting/apps/<appnamn>/`)
