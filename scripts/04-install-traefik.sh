@@ -33,6 +33,13 @@ api:
 log:
   level: INFO
 
+# Backends (t.ex. Node/nginx) har ofta kort keep-alive-timeout (5s för uptime-kuma).
+# Traefiks default är 90s, vilket ger stale connections och 504/hang.
+# 3s säkerställer att Traefik stänger idle connections först.
+serversTransport:
+  forwardingTimeouts:
+    idleConnTimeout: 3s
+
 providers:
   docker:
     exposedByDefault: false

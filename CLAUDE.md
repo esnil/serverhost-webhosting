@@ -93,6 +93,8 @@ ssh deploy@217.154.83.127 '
 
 **OBS:** `docker restart traefik` är obligatoriskt efter varje app-deploy. `docker compose up -d` återskapar containern med ny intern IP — Traefik håller kvar TCP-connections till gamla IP:n och hänger utan timeout. Traefik-omstarten rensar connection pool och förhindrar att sidan ser ut att vara nere direkt efter deploy.
 
+**Traefik idleConnTimeout:** Konfigurerad till `3s` i `traefik.yaml` (`serversTransport.forwardingTimeouts.idleConnTimeout`). Backends som Node.js/uptime-kuma stänger idle keep-alive-connections efter ~5s. Traefiks default är 90s → stale connections → 504/hang för externa requests trots att backend mår bra. Symtom: TLS-handshake lyckas, 0 bytes tar emot, direkttester mot backend funkar. Fix: `docker restart traefik`.
+
 ## Nyckelprinciper
 
 **Bygg inte på VPS:en.** Inga build-tools på servern — bara `docker` och `docker compose`.
