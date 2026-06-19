@@ -105,7 +105,46 @@ ssh deploy@217.154.83.127 '
 
 **Linting:** Alla frontend-appar ska ha ESLint konfigurerat. CI-jobbet kör lint INNAN Docker-build för snabb feedback. `npm run lint` ska vara rent innan push.
 
-**Databas:** Börja med en container per app (isolerat, lätt att flytta/ta bort).
+**Databas:** SQLite per app med bind mount. Enkelt, isolerat och lätt att flytta/ta bort.
+
+**Persistens:** Använd bind mounts till `/opt/hosting/apps/<app>/data/`, inte named volumes. Bind mounts är lättare att inspektera, säkerhetskopiera och flytta. Se avsnittet nedan.
+
+## Persistens
+
+Appar som behöver spara data (uppladdade filer, databaser, konfiguration) använder bind mounts till en `data/`-katalog bredvid `compose.yaml`.
+
+### Katalogstruktur på VPS
+
+```
+/opt/hosting/apps/<app>/
+  compose.yaml
+  .env
+  data/
+    media/    # uppladdade filer (bilder, filmer)
+    db/       # databasfiler (SQLite-fil eller Postgres-data)
+```
+
+Skapa datakatalogerna manuellt vid första setup — detta sker inte automatiskt via GitHub Actions:
+
+```bash
+mkdir -p /opt/hosting/apps/<app>/data/{media,db}
+```
+
+### compose.yaml-mönster med bind mounts
+
+```yaml
+services:
+  app:
+    volumes:
+      - /opt/hosting/apps/<app>/data/media:/app/media
+      - /opt/hosting/apps/<app>/data/db:/app/db
+    environment:
+      DATABASE_URL: sqlite:////app/db/app.db
+```
+
+### Backup
+
+Backup-lösning för persistenta volymer är planerad (utan molntjänster). Tills vidare: känn till vad som lever under `/opt/hosting/apps/<app>/data/` och ta manuell backup innan riskfyllda operationer (tex deploy med schema-migreringar).
 
 ## Traefik-labels (standardmönster)
 
