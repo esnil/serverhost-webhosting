@@ -62,7 +62,7 @@ $SSH "cd $REMOTE_APP_DIR && \
         -e JF_ADMIN_EMAIL='${JF_ADMIN_EMAIL:-}' \
         -e JF_ADMIN_PASSWORD='${JF_ADMIN_PASSWORD:-}' \
         fishing php /app/bin/migrate-standalone.php && \
-    IMAGE_TAG='$TAG' docker compose up -d && \
+    IMAGE_TAG='$TAG' docker compose up -d --remove-orphans && \
     docker image prune -f --filter 'until=168h' && \
     docker restart traefik"
 
