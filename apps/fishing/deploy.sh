@@ -66,4 +66,4 @@ $SSH "cd $REMOTE_APP_DIR && \
     docker image prune -f --filter 'until=168h' && \
     docker restart traefik"
 
-echo "==> Klart. Deltagare: https://fiske.vps.encab.se  ·  Admin: https://fiske-admin.vps.encab.se"
+echo "==> Klart. Deltagare: https://fiske.ostersundarn.se  ·  Admin: https://fiske.ostersundarn.se/admin/"

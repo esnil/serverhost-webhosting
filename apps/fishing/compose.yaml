@@ -1,6 +1,7 @@
 # JLSK Fishing — Öppen-driftfallet (ingen WordPress).
-# Två containrar ur SAMMA image: deltagar-appen och admin-appen. De delar en
-# SQLite-fil och en uploads-katalog via bind mounts under /opt/hosting/apps/fishing/data/.
+# EN container, single-origin: samma image servar deltagarappen på / och admin på
+# /admin/ (skalval path-baserat i public-standalone/app.php — ingen JF_APP, ingen
+# admin-subdomän). SQLite + uploads via bind mounts under /opt/hosting/apps/fishing/data/.
 #
 # Imagen byggs och laddas lokalt (docker save | ssh docker load) av deploy.sh —
 # den hämtas alltså INTE från ett register. IMAGE_TAG styr vilken laddad tagg som körs.
@@ -11,11 +12,11 @@ services:
     container_name: fishing
     restart: unless-stopped
     environment:
-      JF_APP: participant
       JF_DB_DSN: "sqlite:/data/db/jlsk_fishing.sqlite"
       JF_DB_PREFIX: jf_
       JF_UPLOAD_DIR: /data/uploads
       JF_UPLOAD_URL: /uploads
+      JF_BRAND_PROFILE: jlsk
     volumes:
       - /opt/hosting/apps/fishing/data/db:/data/db
       - /opt/hosting/apps/fishing/data/uploads:/data/uploads
@@ -23,32 +24,10 @@ services:
       - proxy
     labels:
       - "traefik.enable=true"
-      - "traefik.http.routers.fishing.rule=Host(`fiske.vps.encab.se`)"
+      - "traefik.http.routers.fishing.rule=Host(`fiske.ostersundarn.se`)"
       - "traefik.http.routers.fishing.entrypoints=websecure"
       - "traefik.http.routers.fishing.tls.certresolver=letsencrypt"
       - "traefik.http.services.fishing.loadbalancer.server.port=80"
-
-  fishing-admin:
-    image: jlsk-fishing:${IMAGE_TAG:-latest}
-    container_name: fishing-admin
-    restart: unless-stopped
-    environment:
-      JF_APP: admin
-      JF_DB_DSN: "sqlite:/data/db/jlsk_fishing.sqlite"
-      JF_DB_PREFIX: jf_
-      JF_UPLOAD_DIR: /data/uploads
-      JF_UPLOAD_URL: /uploads
-    volumes:
-      - /opt/hosting/apps/fishing/data/db:/data/db
-      - /opt/hosting/apps/fishing/data/uploads:/data/uploads
-    networks:
-      - proxy
-    labels:
-      - "traefik.enable=true"
-      - "traefik.http.routers.fishing-admin.rule=Host(`fiske-admin.vps.encab.se`)"
-      - "traefik.http.routers.fishing-admin.entrypoints=websecure"
-      - "traefik.http.routers.fishing-admin.tls.certresolver=letsencrypt"
-      - "traefik.http.services.fishing-admin.loadbalancer.server.port=80"
 
 networks:
   proxy:

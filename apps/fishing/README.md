@@ -1,16 +1,17 @@
 # fishing — JLSK Fisketävling (Öppen-driftfall)
 
-Kör `jlsk-fishing`-appens **Öppen-läge** (utan WordPress) på VPS:en. Två appar ur
-samma image bakom Traefik:
+Kör `jlsk-fishing`-appens **Öppen-läge** (utan WordPress) på VPS:en. **En container,
+single-origin** bakom Traefik — samma image servar både deltagare och admin:
 
-| App | URL | Container | Serverar |
-|---|---|---|---|
-| Deltagare (PWA) | `fiske.vps.encab.se` | `fishing` | `app/dist` + `/jf/v1`-API |
-| Admin | `fiske-admin.vps.encab.se` | `fishing-admin` | `admin/dist` + `/jf/v1`-API |
+| Väg | URL | Serverar |
+|---|---|---|
+| Deltagare (PWA) | `fiske.ostersundarn.se/` | `app/dist` + `/jf/v1`-API |
+| Admin | `fiske.ostersundarn.se/admin/` | `admin/dist` + `/jf/v1`-API |
 
-Båda delar en **SQLite-fil** och en **uploads-katalog** under
-`/opt/hosting/apps/fishing/data/`. Autentisering sköts av appens egna
-admin-login (e-post + lösenord → bearer-token) — ingen Traefik-BasicAuth.
+Skalval är **path-baserat** i `public-standalone/app.php` (`/admin`-prefix → admin,
+annars deltagare) — **ingen `JF_APP`, ingen admin-subdomän**. SQLite-fil + uploads-katalog
+under `/opt/hosting/apps/fishing/data/`. Autentisering sköts av appens egna admin-login
+(e-post + lösenord → bearer-token) — ingen Traefik-BasicAuth.
 
 Appens källkod ligger i det separata repot `../jlsk/jlsk-fishing`. Byggfilerna
 (`deploy/Dockerfile`, `deploy/nginx.conf`, `deploy/entrypoint.sh`) och
@@ -39,8 +40,8 @@ Vanlig omdeploy (admin finns redan) — behöver inga env-variabler:
 
 ## Engångssteg vid första setup
 
-1. **DNS (Loopia):** A-poster `fiske.vps` och `fiske-admin.vps` → `217.154.83.127`.
-   Traefik hämtar Let's Encrypt-cert automatiskt när DNS pekar rätt.
+1. **DNS (Loopia):** A-post `fiske.ostersundarn.se` → `217.154.83.127`. Single-origin →
+   **en** post räcker (admin nås på `/admin/`). Traefik hämtar Let's Encrypt-cert automatiskt.
 2. **Admin-uppgifter** i `apps/fishing/.env` innan första `deploy.sh`.
 3. **GPS-städning (cron)** på VPS:en — rensar positioner äldre än 24h. Lägg i
    deploy-användarens crontab (`crontab -e`):
@@ -60,7 +61,7 @@ data/
 ```
 
 Ta manuell backup av hela `data/`-katalogen innan riskfyllda operationer
-(SQLite kan kopieras säkert när apparna är stoppade, eller via `sqlite3 .backup`).
+(SQLite kan kopieras säkert när appen är stoppad, eller via `sqlite3 .backup`).
 
 ## Rollback
 
