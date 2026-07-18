@@ -184,6 +184,21 @@ Varje app har två workflows:
 3. `docker image prune`
 4. `docker restart traefik`
 
+### Pre-byggd base-image för Node.js-appar med native-moduler
+
+Appar som kompilerar native-moduler (t.ex. `better-sqlite3`) tar lång tid att bygga i CI eftersom det kräver python3/make/g++. Lösningen är en separat `Dockerfile.base` som bygger production-deps och pushas som `<app>-base:main` till GHCR — huvud-`Dockerfile` kopierar bara kod ovanpå base-imagen.
+
+**Filer:**
+- `Dockerfile.base` — `FROM node:22-alpine`, installerar build-tools, kör `npm ci --omit=dev`
+- `Dockerfile` — multi-stage: bygger kod i `node:22-alpine`, sen `FROM ${BASE_IMAGE}` (via `ARG BASE_IMAGE`) och kopierar dist
+
+**CI-logik i build-jobbet:**
+1. Pulla befintlig base-image från GHCR
+2. Om `package*.json` eller `Dockerfile.base` ändrats (eller image saknas) → bygg och pusha ny base-image
+3. Bygg alltid huvud-imagen med `--build-arg BASE_IMAGE=ghcr.io/<repo>/<app>-base:main`
+
+Base-imagen behöver bara byggas om när beroenden ändras. Vanliga code-pushes hoppar direkt till steg 3 och slipper kompilering av native-moduler. Använd `actions/checkout@v5` och `actions/setup-node@v5` (v4 ger Node.js 20-deprecation-varning i GHA).
+
 ## Viktiga sökvägar
 
 | Sökväg | Innehåll |
