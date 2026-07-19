@@ -17,6 +17,19 @@ services:
       JF_UPLOAD_DIR: /data/uploads
       JF_UPLOAD_URL: /uploads
       JF_BRAND_PROFILE: jlsk
+      # Utgående e-post: magiska inloggningslänkar + adminnotis vid ny feedback.
+      # Värdena interpoleras ur .env BREDVID denna fil PÅ SERVERN
+      # (/opt/hosting/apps/fishing/.env) — den är gitignorerad och bär SMTP-lösenordet.
+      # Saknas JF_SMTP_HOST faller appen tillbaka på NullMailer och skickar TYST ingenting.
+      JF_SMTP_HOST: "${JF_SMTP_HOST:-}"
+      JF_SMTP_PORT: "${JF_SMTP_PORT:-587}"
+      JF_SMTP_ENCRYPTION: "${JF_SMTP_ENCRYPTION:-tls}"
+      JF_SMTP_USER: "${JF_SMTP_USER:-}"
+      JF_SMTP_PASS: "${JF_SMTP_PASS:-}"
+      JF_MAIL_FROM: "${JF_MAIL_FROM:-}"
+      JF_MAIL_FROM_NAME: "${JF_MAIL_FROM_NAME:-}"
+      JF_MAIL_REPLY_TO: "${JF_MAIL_REPLY_TO:-}"
+      JF_MAIL_TO: "${JF_MAIL_TO:-}"
     volumes:
       - /opt/hosting/apps/fishing/data/db:/data/db
       - /opt/hosting/apps/fishing/data/uploads:/data/uploads
