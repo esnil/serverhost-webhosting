@@ -17,6 +17,10 @@ services:
       JF_UPLOAD_DIR: /data/uploads
       JF_UPLOAD_URL: /uploads
       JF_BRAND_PROFILE: jlsk
+      # Appens publika origin. Sätts EXPLICIT därför att magiska inloggningslänkar byggs av
+      # den: härleds den ur requesten blir schemat fel bakom Traefik (TLS termineras där, så
+      # containern ser vanlig HTTP) och värdnamnet blir klientstyrt via Host-headern.
+      JF_APP_URL: "https://fiske.ostersundarn.se/"
       # Utgående e-post: magiska inloggningslänkar + adminnotis vid ny feedback.
       # Värdena interpoleras ur .env BREDVID denna fil PÅ SERVERN
       # (/opt/hosting/apps/fishing/.env) — den är gitignorerad och bär SMTP-lösenordet.
