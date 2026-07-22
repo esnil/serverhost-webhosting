@@ -66,4 +66,13 @@ $SSH "cd $REMOTE_APP_DIR && \
     docker image prune -f --filter 'until=168h' && \
     docker restart traefik"
 
+# Feedback-genomgång (jlsk RM125, beslut: alt 2 — status underhålls manuellt server-side).
+# Öppen-driftfallet har shell, så feedbacken surfas vid VARJE deploy i stället för att glömmas:
+# ett daterat arkiv skrivs till uploads (durabelt, överlever container-bytet), och listan
+# skrivs ut för åtgärd. Åtgärdade poster raderas manuellt: `docker exec fishing php
+# /app/bin/feedback.php delete <id> --yes`. `|| true` — feedback får aldrig fälla en deploy.
+echo "==> Feedback (RM125): arkiverar + listar öppna poster för genomgång"
+$SSH "docker exec fishing php /app/bin/feedback.php export all /data/uploads/feedback-arkiv/\$(date +%F) || true"
+$SSH "docker exec fishing php /app/bin/feedback.php list || true"
+
 echo "==> Klart. Deltagare: https://fiske.ostersundarn.se  ·  Admin: https://fiske.ostersundarn.se/admin/"
