@@ -75,4 +75,33 @@ echo "==> Feedback (RM125): arkiverar + listar öppna poster för genomgång"
 $SSH "docker exec fishing php /app/bin/feedback.php export all /data/uploads/feedback-arkiv/\$(date +%F) || true"
 $SSH "docker exec fishing php /app/bin/feedback.php list || true"
 
+# --- Feedback-synk ROADMAP ↔ drift (jlsk RM144) --------------------------------------------
+# Håller ROADMAP.md (git) och driftens jf_feedback i synk utan att någon behöver komma ihåg det:
+# (1) applicerar köade statusövergångar (pending-status.jsonl) i driften, (2) exporterar ett
+# manifest av feedback-tillståndet tillbaka till git-arbetskopian. Operatören committar sedan det
+# tömda kö + uppdaterade manifestet. Best-effort — synken får ALDRIG fälla en deploy.
+# Design: jlsk-fishing/docs/FEEDBACK_ROADMAP_SYNC_PLAN.md (fas 5).
+JF_QUEUE="$APP_DIR/feedback/pending-status.jsonl"
+JF_MANIFEST="$APP_DIR/feedback/manifest.json"
+
+if [ -s "$JF_QUEUE" ]; then
+    echo "==> Feedback-synk (RM144): applicerar köade statusövergångar"
+    # Skeppa kön in i containern (lokal fil → stdin → /tmp) och applicera (idempotent, best-effort).
+    $SSH "docker exec -i fishing sh -c 'cat > /tmp/jf-pending.jsonl'" < "$JF_QUEUE" || true
+    if $SSH "docker exec fishing php /app/bin/feedback.php apply-pending /tmp/jf-pending.jsonl"; then
+        : > "$JF_QUEUE"
+        echo "    kön applicerad + tömd lokalt — COMMITTA den tömda $JF_QUEUE"
+    else
+        echo "    VARNING: apply-pending misslyckades — kön behålls (idempotent, tas om vid nästa deploy)"
+    fi
+fi
+
+echo "==> Feedback-synk (RM144): exporterar manifestet till git-arbetskopian"
+if $SSH "docker exec -e JF_MANIFEST_SOURCE=open:fiske.ostersundarn.se fishing php /app/bin/feedback.php manifest /tmp/jf-manifest.json"; then
+    mkdir -p "$(dirname "$JF_MANIFEST")"
+    if scp "${VPS_USER}@${VPS_HOST}:/tmp/jf-manifest.json" "$JF_MANIFEST"; then
+        echo "    manifest → $JF_MANIFEST — COMMITTA det (aktiverar feedback_sync-grindarna i CI)"
+    fi
+fi
+
 echo "==> Klart. Deltagare: https://fiske.ostersundarn.se  ·  Admin: https://fiske.ostersundarn.se/admin/"
