@@ -97,11 +97,17 @@ if [ -s "$JF_QUEUE" ]; then
 fi
 
 echo "==> Feedback-synk (RM144): exporterar manifestet till git-arbetskopian"
-if $SSH "docker exec -e JF_MANIFEST_SOURCE=open:fiske.ostersundarn.se fishing php /app/bin/feedback.php manifest /tmp/jf-manifest.json"; then
-    mkdir -p "$(dirname "$JF_MANIFEST")"
-    if scp "${VPS_USER}@${VPS_HOST}:/tmp/jf-manifest.json" "$JF_MANIFEST"; then
-        echo "    manifest → $JF_MANIFEST — COMMITTA det (aktiverar feedback_sync-grindarna i CI)"
-    fi
+# `manifest -` skriver REN JSON till stdout → strömma den genom SSH direkt till git-arbetskopian.
+# Tidigare skrevs manifestet till containerns /tmp och scp:ades sedan från VÄRDENS /tmp (annat
+# filsystem) → "No such file or directory". Nu behövs varken container-/tmp eller scp. Skriv till
+# en temp och flytta atomiskt bara vid lyckad export, så ett fel aldrig lämnar ett trasigt manifest.
+mkdir -p "$(dirname "$JF_MANIFEST")"
+if $SSH "docker exec -e JF_MANIFEST_SOURCE=open:fiske.ostersundarn.se fishing php /app/bin/feedback.php manifest -" > "$JF_MANIFEST.tmp"; then
+    mv "$JF_MANIFEST.tmp" "$JF_MANIFEST"
+    echo "    manifest → $JF_MANIFEST — COMMITTA det (aktiverar feedback_sync-grindarna i CI)"
+else
+    rm -f "$JF_MANIFEST.tmp"
+    echo "    VARNING: manifest-export misslyckades — behåller föregående manifest"
 fi
 
 echo "==> Klart. Deltagare: https://fiske.ostersundarn.se  ·  Admin: https://fiske.ostersundarn.se/admin/"
