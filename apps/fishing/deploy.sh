@@ -66,6 +66,46 @@ $SSH "cd $REMOTE_APP_DIR && \
     docker image prune -f --filter 'until=168h' && \
     docker restart traefik"
 
+# --- Egress-koll (jlsk RM235) ---------------------------------------------------------------
+# Väder-autofyllet (jlsk RM99/RM226) är best-effort i två lager och sväljer ALLA fel —
+# blockerad utgående HTTPS syns aldrig i drift, vädret förblir bara tomt. Verifiera därför
+# vid varje deploy att containern når båda väderkällorna, via exakt samma väg som appen
+# (php ext-curl, samma container, samma nät — imagen saknar curl-CLI). Bara transportfel
+# (DNS/TLS/brandvägg/timeout) fäller; HTTP-status ignoreras (4xx/5xx = värden är nåbar).
+# Komplett utgående inventarium: jlsk-fishing/docs/DEPLOYMENT_PLAN.md §4.6.
+echo "==> Egress-koll (RM235): verifierar utgående HTTPS till väderkällorna"
+if $SSH "docker exec -i fishing php" <<'PHP'
+<?php
+$urls = [
+    'https://opendata-download-metfcst.smhi.se/api/category/pmp3g/version/2/',
+    'https://api.open-meteo.com/v1/forecast?latitude=63&longitude=14',
+];
+foreach ($urls as $url) {
+    $ch = curl_init($url);
+    curl_setopt_array($ch, [
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_NOBODY => true,
+        CURLOPT_CONNECTTIMEOUT => 5,
+        CURLOPT_TIMEOUT => 10,
+    ]);
+    curl_exec($ch);
+    if (curl_errno($ch) !== 0) {
+        fwrite(STDERR, "EGRESS BLOCKERAD: {$url} — " . curl_error($ch) . "\n");
+        exit(1);
+    }
+}
+echo "    egress OK: båda väderkällorna nåbara\n";
+PHP
+then
+    :
+else
+    echo "FEL: utgående HTTPS från fishing-containern når inte väderkällorna —" >&2
+    echo "     väder-autofyllet (jlsk RM99) är då TYST trasigt i drift." >&2
+    echo "     Kontrollera VPS:ens brandvägg: utgående 443 måste vara öppen från containern." >&2
+    echo "     Allowlista inte per IP — SMHI/Open-Meteo roterar adresser." >&2
+    exit 1
+fi
+
 # Feedback-genomgång (jlsk RM125, beslut: alt 2 — status underhålls manuellt server-side).
 # Öppen-driftfallet har shell, så feedbacken surfas vid VARJE deploy i stället för att glömmas:
 # ett daterat arkiv skrivs till uploads (durabelt, överlever container-bytet), och listan
