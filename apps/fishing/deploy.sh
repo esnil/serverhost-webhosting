@@ -37,9 +37,35 @@ if [ ! -f "$APP_DIR/deploy/Dockerfile" ]; then
     exit 1
 fi
 
+# Rollback = explicit tagg-argument (deployar en redan laddad image); då gäller inte tag-vakten.
+ROLLBACK=0; [[ -n "${1:-}" ]] && ROLLBACK=1
 # Tagg: argument, annars app-repots git-beskrivning, annars 'latest'.
 TAG="${1:-$(git -C "$APP_DIR" describe --always --dirty --tags 2>/dev/null || echo latest)}"
+# Versionen imagen SKA vara (ur plugin-headern) — används av tag-vakten + post-deploy-asserten.
+EXPECTED_VERSION="$(grep -m1 "define( *'JF_VERSION'" "$APP_DIR/jlsk-fishing.php" | sed "s/.*'JF_VERSION', *'//;s/'.*//")"
+RELEASE_TAG="jlsk-fishing-v$EXPECTED_VERSION"
 SSH="ssh ${VPS_USER}@${VPS_HOST}"
+
+# --- Tag-matchvakt (RM240): bygg bara det som release-taggen pekar på ---
+# Imagen byggs ur APP_DIR:s ARBETSTRÄD (Dockerfile bygger frontend ur källan). Deployar vi medan
+# trädet inte matchar release-taggen skeppar vi fel kod under rätt versionsnummer — precis det
+# glapp v1.13.0-röran handlade om. Kräv ett rent träd som är identiskt med taggen. Rollback
+# (explicit tagg-arg) hoppar över; nödutgång SKIP_TAG_CHECK=1.
+if [[ "$ROLLBACK" == "0" && "${SKIP_TAG_CHECK:-}" != "1" ]]; then
+    if ! git -C "$APP_DIR" diff --quiet || ! git -C "$APP_DIR" diff --cached --quiet; then
+        echo "FEL: $APP_DIR har ocommittade ändringar — deploya från ett rent träd." >&2
+        exit 1
+    fi
+    if ! git -C "$APP_DIR" rev-parse -q --verify "refs/tags/$RELEASE_TAG" >/dev/null; then
+        echo "FEL: release-taggen $RELEASE_TAG finns inte lokalt (git fetch --tags, eller kör release-finish.sh)." >&2
+        exit 1
+    fi
+    if ! git -C "$APP_DIR" diff --quiet "$RELEASE_TAG" HEAD -- .; then
+        echo "FEL: arbetsträdet skiljer sig från $RELEASE_TAG — checka ut taggen först: git -C $APP_DIR checkout $RELEASE_TAG" >&2
+        exit 1
+    fi
+    echo "==> Tag-matchvakt OK: träd == $RELEASE_TAG"
+fi
 
 echo "==> Bygger $IMAGE:$TAG (kontext: $APP_DIR)"
 docker build \
@@ -104,6 +130,27 @@ else
     echo "     Kontrollera VPS:ens brandvägg: utgående 443 måste vara öppen från containern." >&2
     echo "     Allowlista inte per IP — SMHI/Open-Meteo roterar adresser." >&2
     exit 1
+fi
+
+# --- Post-deploy: verifiera att rätt version faktiskt kör (RM240) ---
+# Traefik startar om ovan; vänta in att API:et svarar med den förväntade x-jf-version innan vi
+# säger "klart". Fångar en tyst deploy som inte slog igenom (fel image/cache). Rollback + explicit
+# SKIP_VERSION_ASSERT=1 hoppar över; JF_LIVE_URL overridar värden.
+if [[ "$ROLLBACK" == "0" && "${SKIP_VERSION_ASSERT:-}" != "1" ]]; then
+    echo "==> Verifierar driftsatt version (x-jf-version == $EXPECTED_VERSION)"
+    LIVE_URL="${JF_LIVE_URL:-https://fiske.ostersundarn.se}/jf/v1/seasons/active"
+    live_ver=""
+    for _ in 1 2 3 4 5 6; do
+        live_ver="$(curl -fsS -m 10 -D - -o /dev/null "$LIVE_URL" 2>/dev/null \
+            | tr -d '\r' | awk -F': ' 'tolower($1)=="x-jf-version"{print $2}')"
+        [[ "$live_ver" == "$EXPECTED_VERSION" ]] && break
+        sleep 5
+    done
+    if [[ "$live_ver" != "$EXPECTED_VERSION" ]]; then
+        echo "FEL: live x-jf-version='$live_ver', förväntade '$EXPECTED_VERSION' — deployen slog inte igenom." >&2
+        exit 1
+    fi
+    echo "  Live-version OK: $live_ver"
 fi
 
 # Feedback-genomgång (jlsk RM125, beslut: alt 2 — status underhålls manuellt server-side).
