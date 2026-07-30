@@ -18,17 +18,10 @@
 # Kan även läggas i apps/fishing/.env (kopiera från .env.example).
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+# Delad env-resolver: SCRIPT_DIR, REPO_ROOT, .env, VPS_HOST, VPS_USER, APP_DIR, SSH
+# (samma logik som förr inline här — nu delad med feedback-sync.sh/feedback-report.sh, RM254).
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/_env.sh"
 
-# Ladda lokala hemligheter/overrides om de finns (checkas aldrig in).
-if [ -f "$SCRIPT_DIR/.env" ]; then
-    set -a; . "$SCRIPT_DIR/.env"; set +a
-fi
-
-VPS_HOST="${VPS_HOST:-217.154.83.127}"
-VPS_USER="${VPS_USER:-deploy}"
-APP_DIR="${APP_DIR:-$REPO_ROOT/../jlsk/jlsk-fishing}"
 REMOTE_APP_DIR="/opt/hosting/apps/fishing"
 IMAGE="jlsk-fishing"
 
@@ -44,7 +37,6 @@ TAG="${1:-$(git -C "$APP_DIR" describe --always --dirty --tags 2>/dev/null || ec
 # Versionen imagen SKA vara (ur plugin-headern) — används av tag-vakten + post-deploy-asserten.
 EXPECTED_VERSION="$(grep -m1 "define( *'JF_VERSION'" "$APP_DIR/jlsk-fishing.php" | sed "s/.*'JF_VERSION', *'//;s/'.*//")"
 RELEASE_TAG="jlsk-fishing-v$EXPECTED_VERSION"
-SSH="ssh ${VPS_USER}@${VPS_HOST}"
 
 # --- Tag-matchvakt (RM240): bygg bara det som release-taggen pekar på ---
 # Imagen byggs ur APP_DIR:s ARBETSTRÄD (Dockerfile bygger frontend ur källan). Deployar vi medan
@@ -162,39 +154,23 @@ echo "==> Feedback (RM125): arkiverar + listar öppna poster för genomgång"
 $SSH "docker exec fishing php /app/bin/feedback.php export all /data/uploads/feedback-arkiv/\$(date +%F) || true"
 $SSH "docker exec fishing php /app/bin/feedback.php list || true"
 
-# --- Feedback-synk ROADMAP ↔ drift (jlsk RM144) --------------------------------------------
+# --- Feedback-synk ROADMAP ↔ drift (jlsk RM144/RM254) --------------------------------------
 # Håller ROADMAP.md (git) och driftens jf_feedback i synk utan att någon behöver komma ihåg det:
-# (1) applicerar köade statusövergångar (pending-status.jsonl) i driften, (2) exporterar ett
-# manifest av feedback-tillståndet tillbaka till git-arbetskopian. Operatören committar sedan det
-# tömda kö + uppdaterade manifestet. Best-effort — synken får ALDRIG fälla en deploy.
+# den delade kärnan feedback-sync.sh (1) applicerar köade statusövergångar (pending-status.jsonl)
+# i driften och (2) re-exporterar manifestet av feedback-tillståndet tillbaka till git-arbetskopian.
+# Vid deploy appliceras HELA kön (inkl. `done` — den här deployen skeppar fixen, så resolved_version
+# blir rätt); vid lyckad apply töms kön lokalt. Operatören committar sedan det tömda kö +
+# uppdaterade manifestet. Best-effort — synken får ALDRIG fälla en deploy.
 # Design: jlsk-fishing/docs/FEEDBACK_ROADMAP_SYNC_PLAN.md (fas 5).
 JF_QUEUE="$APP_DIR/feedback/pending-status.jsonl"
-JF_MANIFEST="$APP_DIR/feedback/manifest.json"
 
-if [ -s "$JF_QUEUE" ]; then
-    echo "==> Feedback-synk (RM144): applicerar köade statusövergångar"
-    # Skeppa kön in i containern (lokal fil → stdin → /tmp) och applicera (idempotent, best-effort).
-    $SSH "docker exec -i fishing sh -c 'cat > /tmp/jf-pending.jsonl'" < "$JF_QUEUE" || true
-    if $SSH "docker exec fishing php /app/bin/feedback.php apply-pending /tmp/jf-pending.jsonl"; then
+if "$SCRIPT_DIR/feedback-sync.sh" "$JF_QUEUE"; then
+    if [ -s "$JF_QUEUE" ]; then
         : > "$JF_QUEUE"
-        echo "    kön applicerad + tömd lokalt — COMMITTA den tömda $JF_QUEUE"
-    else
-        echo "    VARNING: apply-pending misslyckades — kön behålls (idempotent, tas om vid nästa deploy)"
+        echo "    kön applicerad + tömd lokalt — COMMITTA den tömda $JF_QUEUE + manifestet"
     fi
-fi
-
-echo "==> Feedback-synk (RM144): exporterar manifestet till git-arbetskopian"
-# `manifest -` skriver REN JSON till stdout → strömma den genom SSH direkt till git-arbetskopian.
-# Tidigare skrevs manifestet till containerns /tmp och scp:ades sedan från VÄRDENS /tmp (annat
-# filsystem) → "No such file or directory". Nu behövs varken container-/tmp eller scp. Skriv till
-# en temp och flytta atomiskt bara vid lyckad export, så ett fel aldrig lämnar ett trasigt manifest.
-mkdir -p "$(dirname "$JF_MANIFEST")"
-if $SSH "docker exec -e JF_MANIFEST_SOURCE=open:fiske.ostersundarn.se fishing php /app/bin/feedback.php manifest -" > "$JF_MANIFEST.tmp"; then
-    mv "$JF_MANIFEST.tmp" "$JF_MANIFEST"
-    echo "    manifest → $JF_MANIFEST — COMMITTA det (aktiverar feedback_sync-grindarna i CI)"
 else
-    rm -f "$JF_MANIFEST.tmp"
-    echo "    VARNING: manifest-export misslyckades — behåller föregående manifest"
+    echo "    VARNING: feedback-synk misslyckades — kön behålls (idempotent, tas om vid nästa deploy)"
 fi
 
 echo "==> Klart. Deltagare: https://fiske.ostersundarn.se  ·  Admin: https://fiske.ostersundarn.se/admin/"
