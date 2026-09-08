@@ -1,0 +1,86 @@
+# ci-runner — self-hosted GitHub Actions-runner för bus-analyzer (esnil/bus-analyzer).
+#
+# INTE en webbapp. Ingen Traefik-label, inga publicerade portar, inte på `proxy`-nätverket:
+# runnern long-pollar GitHub UTÅT och tar aldrig emot inkommande trafik. Därför gäller inte
+# heller repots `docker restart traefik`-regel efter deploy — Traefik vet inte att den finns.
+#
+# Imagen och entrypointen ägs av bus-analyzer-repot (docker/runner/). Den här filen är VÄRDENS
+# halva av kontraktet: taggar, resurstak, nätverk och namn. Allt som är maskinspecifikt bor här,
+# inget av det är inbakat i imagen.
+#
+# Imagen BYGGS PÅ VPS:en av deploy.sh — build-kontexten (Dockerfile + entrypoint.sh) pipas över
+# SSH och byggs med VPS:ens nätverk. Den finns alltså inte i något register, och det är avsiktligt:
+# imagen är ~5,4 GB och bus-analyzer är privat, så GHCR-lagringen på gratisplanen räcker inte.
+# `pull_policy: never` gör felet begripligt (image saknas) i stället för ett obskyrt pull-fel.
+
+services:
+  runner:
+    image: bus-analyzer-runner:${RUNNER_IMAGE_TAG:-local}
+    pull_policy: never
+    # Fast namn (i stället för upstreams `--scale`). En ANDRA runner läggs till som ett eget
+    # service-block (se README § "Att lägga till en andra runner"), inte med --scale.
+    container_name: ci-runner
+    # `hostname` MÅSTE sättas separat — `container_name` sätter den inte. Entrypointen döper
+    # runnern till `<RUNNER_NAME_PREFIX>-$(hostname)`, och utan detta blir hostname container-ID:t:
+    # ett nytt namn i GitHubs runnerlista varje gång containern återskapas (mätt 2026-09-08:
+    # `vps-c982fe03aa99`). Med ett fast hostname heter den alltid `vps-ci-runner`, och det efemära
+    # varv-per-jobb lämnar inga spöken efter sig i listan.
+    hostname: ci-runner
+    restart: unless-stopped
+    # GH_PAT bor bara här (chmod 600 på servern). Entrypointen re-execar med `env -u GH_PAT`
+    # efter registreringen, så jobbkoden ser den aldrig (bus-analyzer RM514).
+    env_file: .env
+    environment:
+      GH_REPO: ${GH_REPO:-esnil/bus-analyzer}
+      RUNNER_LABELS: ${RUNNER_LABELS:?sätts i .env, t.ex. e2e,ci2}
+      RUNNER_NAME_PREFIX: ${RUNNER_NAME_PREFIX:-vps}
+
+    # ── Resurstaken ÄR skälet till att den här filen finns ───────────────────────────────────
+    # Upstreams compose.yaml sätter medvetet INGA tak ("en runner tar vad maskinen har") och
+    # hänvisar throttling till en per-värd-override. Det här ÄR den overriden, och den är inte
+    # valfri här: VPS:en har 4 vCPU, 7,7 GB RAM och INGEN swap, och delar dem med produktion
+    # (traefik, uptime-kuma, ostersundarn, fishing, status — ~310 MB tillsammans).
+    #
+    # Utan mem_limit väljer värdens OOM-killer offer efter RSS, och den vet inte att uptime-kuma
+    # betyder mer än en pytest-process. Med taket dödas ett skenande jobb INNE i containern:
+    # CI blir rött, sajterna lever. Det är rätt felläge.
+    #
+    # 3.0 av 4 kärnor / 4 av 7,7 GB lämnar en kärna och ~3,5 GB åt produktion även när CI kör
+    # e2e-jobbet (uvicorn + pnpm build + Vitest browser mode + Playwright Chromium).
+    cpus: 3.0
+    mem_limit: 4g
+
+    networks:
+      - ci
+
+    # Namngivna volymer, INTE bind mounts — ett medvetet undantag från repots persistens-regel.
+    # Regeln finns för appdata man vill inspektera och säkerhetskopiera; det här är slängbara
+    # paketcachar (raderas de fylls de på nästa körning). Bind mounts vore dessutom trasiga:
+    # imagen förskapar ~/.cargo/registry, ~/.cache/uv m.fl. ÄGDA av `runner`, just därför att en
+    # namngiven volym seedas ur imagen. En tom värdkatalog seedas inte — den är root-ägd, och
+    # första bridge-jobbet dör på EACCES (mätt i bus-analyzer 2026-08-20).
+    volumes:
+      - uv-cache:/home/runner/.cache/uv
+      - uv-python:/home/runner/.local/share/uv
+      - pnpm-store:/home/runner/.local/share/pnpm
+      - cargo-registry:/home/runner/.cargo/registry
+      - pw-cache:/home/runner/.cache/ms-playwright
+      - toolcache:/opt/hostedtoolcache
+
+networks:
+  # Eget nätverk, aldrig `proxy`: en CI-container ska inte kunna nå produktionscontainrarna.
+  # FAST subnät därför att scripts/05-ci-runner-firewall.sh refererar det — ett dynamiskt
+  # tilldelat subnät hade gjort brandväggsregeln fel efter första `docker compose down`.
+  ci:
+    name: ci-runner
+    ipam:
+      config:
+        - subnet: 172.30.0.0/24
+
+volumes:
+  uv-cache:
+  uv-python:
+  pnpm-store:
+  cargo-registry:
+  pw-cache:
+  toolcache:

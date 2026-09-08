@@ -34,6 +34,7 @@ serverhost-webhosting/
     02-install-docker.sh
     03-create-docker-networks.sh
     04-install-traefik.sh
+    05-ci-runner-firewall.sh   # nätverksisolering för CI-runnern (körs som root på VPS:en)
   apps/
     status/                # React-statusfrontend, live på hello.vps.encab.se
       Dockerfile
@@ -54,6 +55,15 @@ serverhost-webhosting/
       compose.yaml
     uptime-kuma/           # Uptime Kuma (ingår i apps/status/compose.yaml, inte egen deploy)
       compose.yaml
+    fishing/               # JLSK Fisketävling, källkod i separat repo, deploy via docker save/load
+      compose.yaml
+      deploy.sh
+      README.md
+    ci-runner/             # Self-hosted GitHub Actions-runner för bus-analyzer (ingen webbtjänst)
+      compose.yaml
+      deploy.sh
+      health.sh
+      README.md
 ```
 
 På VPS:en lever allt under `/opt/hosting/`.
@@ -64,8 +74,12 @@ På VPS:en lever allt under `/opt/hosting/`.
 |---|---|---|
 | Status-frontend | `hello.vps.encab.se` | React-app med Uptime Kuma-data, BasicAuth |
 | Uptime Kuma | `uptime.vps.encab.se` | Monitoringpanel, egen autentisering |
+| CI-runner | *(ingen URL)* | Self-hosted GitHub Actions-runner för `esnil/bus-analyzer` |
 
 Uptime Kuma och status-appen deployas tillsammans via `apps/status/compose.yaml`.
+
+CI-runnern är ingen webbtjänst: inga portar, ingen Traefik-label, inte på `proxy`. Se
+`apps/ci-runner/README.md` och avsnittet "CI-runner" nedan.
 
 ## Deploy-flöde
 
@@ -107,6 +121,10 @@ Om detta missas och `compose.yaml` på servern är inaktuell kan appen starta me
 ## Nyckelprinciper
 
 **Bygg inte på VPS:en.** Inga build-tools på servern — bara `docker` och `docker compose`.
+Regeln gäller **appar**: de byggs i GitHub Actions och hämtas som färdig image. Ett medvetet
+undantag finns, `apps/ci-runner`, och skälet står i dess README — CI-runner-imagen är ~5,4 GB,
+består i praktiken bara av nedladdningar, och bus-analyzer är privat så GHCR-lagringen på
+gratisplanen räcker inte. Inget build-tool landar på värden: bygget sker i `docker build`.
 
 **Secrets:** `.env.example` checkas in, `.env` aldrig. GitHub Secrets: `VPS_HOST`, `VPS_USER`, `VPS_SSH_KEY`, `VPS_KNOWN_HOSTS`. Ingen `StrictHostKeyChecking=no`.
 
@@ -199,6 +217,46 @@ Appar som kompilerar native-moduler (t.ex. `better-sqlite3`) tar lång tid att b
 
 Base-imagen behöver bara byggas om när beroenden ändras. Vanliga code-pushes hoppar direkt till steg 3 och slipper kompilering av native-moduler. Använd `actions/checkout@v5` och `actions/setup-node@v5` (v4 ger Node.js 20-deprecation-varning i GHA).
 
+## CI-runner (bus-analyzer)
+
+VPS:en är också **self-hosted GitHub Actions-runner** för det separata repot `esnil/bus-analyzer`.
+En container, `ci-runner`, som long-pollar GitHub utåt och kör CI-jobb. Detaljerna — hur den
+registreras, varför PAT:en försvinner ur processmiljön, felsökningstabell — står i
+`apps/ci-runner/README.md`. Det som är värt att veta *här*, för att inte bli överraskad:
+
+**Den delar maskin med produktion.** 4 vCPU, 7,7 GB RAM, ingen swap, samma låda som
+ostersundarn.se, fiske.ostersundarn.se, statussidan och Uptime Kuma. Därför är den hårt
+inhägnad, och de tre inhägnaderna hänger ihop — ta inte bort en utan att förstå de andra:
+
+1. **Resurstak** i `compose.yaml`: `cpus: 3.0`, `mem_limit: 4g`. Utan mem_limit väljer värdens
+   OOM-killer offer efter RSS, och den vet inte att uptime-kuma betyder mer än en pytest-process.
+   Med taket dör jobbet inne i containern: CI blir rött, sajterna lever.
+2. **Eget nätverk** (`ci-runner`, 172.30.0.0/24) — aldrig `proxy`, inga portar, ingen
+   Traefik-label. Runnern är därför **undantagen från repots `docker restart traefik`-regel**:
+   Traefik vet inte att den finns.
+3. **Brandvägg** via `scripts/05-ci-runner-firewall.sh` — REJECT från CI-subnätet mot alla
+   RFC1918-mål (täcker de andra Docker-nätverken *och* publicerade portar, som DNAT:as dit) samt
+   mot värdens ssh. Internet är öppet; runnern måste nå GitHub, apt, npm, crates.io och PyPI.
+   Reglerna ligger i en systemd-oneshot som är `PartOf=docker.service`, så de kommer tillbaka
+   både vid boot och när dockerd startas om.
+
+**Exakt en runner, med flit.** Två hade blivit 2 kärnor styck — samma maskin som bus-analyzers
+RM491-huvudvärk och RM527:s mätta Playwright-flake under parallell last. Skälen och vad som
+gäller om en andra ändå behövs står i `apps/ci-runner/README.md`.
+
+**Aldrig mot ett publikt repo.** En self-hosted runner på en produktionsvärd förutsätter att
+fork-PR:er inte kan trigga körningar. `esnil/bus-analyzer` är privat — det är förutsättningen.
+
+Deploy och hälsokoll:
+
+```bash
+./apps/ci-runner/deploy.sh     # bygg image PÅ VPS:en + starta
+./apps/ci-runner/health.sh     # container + agent + GitHubs bild av flottan
+```
+
+En bus-analyzer-körning som **köar** i stället för att bli röd betyder att ingen matchande runner
+är online — leta i `health.sh`, inte i diffen.
+
 ## Viktiga sökvägar
 
 | Sökväg | Innehåll |
@@ -206,3 +264,5 @@ Base-imagen behöver bara byggas om när beroenden ändras. Vanliga code-pushes 
 | `/opt/hosting/traefik/` | Traefik-konfiguration |
 | `/opt/hosting/traefik/dynamic/auth.yaml` | BasicAuth-middleware |
 | `/opt/hosting/apps/<app>/` | compose.yaml + .env per app |
+| `/opt/hosting/apps/ci-runner/` | CI-runnerns compose.yaml + .env (PAT, chmod 600) |
+| `/etc/systemd/system/ci-runner-firewall.service` | Nätverksisolering för CI-runnern |

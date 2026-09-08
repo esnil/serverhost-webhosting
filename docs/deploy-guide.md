@@ -17,6 +17,11 @@ Den här guiden beskriver hur appar byggs, publiceras och körs på vår Docker-
 
 **Grundprincipen:** Appen byggs aldrig på VPS:en. GitHub Actions bygger Docker-imagen, pushar till GHCR, och VPS:en hämtar den färdiga imagen.
 
+**Resursbudget att räkna med:** VPS:en har 4 vCPU, 7,7 GB RAM och **ingen swap**, och den kör
+utöver webbapparna en CI-runner (`apps/ci-runner`) som tidvis får ta 3 kärnor och 4 GB. Webbappar
+här är små (~310 MB tillsammans), men en ny app som behöver mycket minne ska dimensioneras mot
+det som är kvar när CI kör, inte mot en tom maskin. Se `apps/ci-runner/README.md`.
+
 **GitHub Actions är primär deploy-metod.** Trigga deploy via Actions → \<app\>-deploy → Run workflow. Manuell SSH-deploy är fallback.
 
 ```
