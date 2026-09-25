@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# health.sh — svara på frågan "kör CI-runnern faktiskt?" i ETT kommando.
+# health.sh — svara på frågan "kör CI-runnerna faktiskt?" (ci-runner + ci-runner-gate) i ETT kommando.
 #
 # "Servern är uppe" är inget bevis. Runnern kan vara offline medan VPS:en mår perfekt, och då
 # KÖAR bus-analyzers pipeline tyst i stället för att bli röd — en körning som aldrig STARTAR är
@@ -21,26 +21,30 @@ REMOTE_DIR="/opt/hosting/apps/ci-runner"
 
 ok=0
 
-echo "── 1. Container ─────────────────────────────────────────────"
-status="$($SSH "docker ps -a --filter name=ci-runner --format '{{.Status}}  ({{.Image}})'" || true)"
-if [ -z "$status" ]; then
-    echo "  SAKNAS — ingen container ci-runner. Kör ./apps/ci-runner/deploy.sh"
-    ok=1
-elif [[ "$status" == Up* ]]; then
-    echo "  $status"
-else
-    echo "  $status  ← inte Up. Se 'docker logs ci-runner'."
-    ok=1
-fi
+echo "── 1. Containrar ────────────────────────────────────────────"
+for c in ci-runner ci-runner-gate; do
+    status="$($SSH "docker ps -a --filter name=^${c}\$ --format '{{.Status}}  ({{.Image}})'" || true)"
+    if [ -z "$status" ]; then
+        echo "  $c: SAKNAS. Kör ./apps/ci-runner/deploy.sh"
+        ok=1
+    elif [[ "$status" == Up* ]]; then
+        echo "  $c: $status"
+    else
+        echo "  $c: $status  ← inte Up. Se 'docker logs $c'."
+        ok=1
+    fi
+done
 
-echo "── 2. Agenten (loggen) ──────────────────────────────────────"
-if $SSH "docker logs ci-runner 2>&1 | grep -q 'Listening for Jobs'"; then
-    echo "  Registrerad och lyssnar efter jobb."
-else
-    echo "  'Listening for Jobs' saknas i loggen — kör inte / mitt i ett jobb. Senaste rader:"
-    $SSH "docker logs --tail 5 ci-runner 2>&1" | sed 's/^/    /'
-    ok=1
-fi
+echo "── 2. Agenterna (loggen) ────────────────────────────────────"
+for c in ci-runner ci-runner-gate; do
+    if $SSH "docker logs $c 2>&1 | grep -q 'Listening for Jobs'"; then
+        echo "  $c: registrerad."
+    else
+        echo "  $c: 'Listening for Jobs' saknas i loggen. Senaste rader:"
+        $SSH "docker logs --tail 5 $c 2>&1" | sed 's/^/    /'
+        ok=1
+    fi
+done
 
 echo "── 3. GitHubs bild av flottan ───────────────────────────────"
 # PAT:en läses ur .env PÅ SERVERN, inte härifrån: då fungerar skriptet från vilken maskin som
@@ -65,8 +69,10 @@ for r in rs:
     print("  {:<26} {:<8} busy={:<5} [{}]{}".format(
         r["name"], r["status"], str(r["busy"]).lower(), labels, here))
 '
-    printf '%s' "$runners_json" | grep -q '"name": *"vps-' \
-        || { echo "  VPS-runnern saknas i GitHubs lista."; ok=1; }
+    for n in vps-ci-runner vps-ci-runner-gate; do
+        printf '%s' "$runners_json" | grep -q "\"name\": *\"$n\"" \
+            || { echo "  $n saknas i GitHubs lista."; ok=1; }
+    done
 fi
 
 echo ""

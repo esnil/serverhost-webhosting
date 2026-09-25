@@ -74,7 +74,7 @@ På VPS:en lever allt under `/opt/hosting/`.
 |---|---|---|
 | Status-frontend | `hello.vps.encab.se` | React-app med Uptime Kuma-data, BasicAuth |
 | Uptime Kuma | `uptime.vps.encab.se` | Monitoringpanel, egen autentisering |
-| CI-runner | *(ingen URL)* | Self-hosted GitHub Actions-runner för `esnil/bus-analyzer` |
+| CI-runner | *(ingen URL)* | Self-hosted GitHub Actions-runner för `esnil/bus-analyzer` (full + liten prose-runner) |
 
 Uptime Kuma och status-appen deployas tillsammans via `apps/status/compose.yaml`.
 
@@ -220,9 +220,10 @@ Base-imagen behöver bara byggas om när beroenden ändras. Vanliga code-pushes 
 ## CI-runner (bus-analyzer)
 
 VPS:en är också **self-hosted GitHub Actions-runner** för det separata repot `esnil/bus-analyzer`.
-En container, `ci-runner`, som long-pollar GitHub utåt och kör CI-jobb. Detaljerna — hur den
-registreras, varför PAT:en försvinner ur processmiljön, felsökningstabell — står i
-`apps/ci-runner/README.md`. Det som är värt att veta *här*, för att inte bli överraskad:
+Två containrar som long-pollar GitHub utåt och kör CI-jobb: `ci-runner` (full, tar allt) och
+`ci-runner-gate` (1 CPU / 2 GB, labeln `gate` enbart: bara `guard` och `backend` på rena
+prosa-PR:er, bus-analyzer RM924). Detaljerna — hur de registreras, varför PAT:en försvinner ur
+processmiljön, felsökningstabell — står i `apps/ci-runner/README.md`. Det som är värt att veta *här*, för att inte bli överraskad:
 
 **Den delar maskin med produktion.** 4 vCPU, 7,7 GB RAM, ingen swap, samma låda som
 ostersundarn.se, fiske.ostersundarn.se, statussidan och Uptime Kuma. Därför är den hårt
@@ -240,8 +241,9 @@ inhägnad, och de tre inhägnaderna hänger ihop — ta inte bort en utan att f�
    Reglerna ligger i en systemd-oneshot som är `PartOf=docker.service`, så de kommer tillbaka
    både vid boot och när dockerd startas om.
 
-**Exakt en runner, med flit.** Två hade blivit 2 kärnor styck — samma maskin som bus-analyzers
-RM491-huvudvärk och RM527:s mätta Playwright-flake under parallell last. Skälen och vad som
+**Exakt en FULL runner, med flit.** Prose-runnern räknas inte hit: den kör aldrig e2e, bridge
+eller hela backend-sviten, och dess tyngsta steg toppar på ~475 MB. Två fulla hade blivit 2 kärnor
+styck — samma maskin som bus-analyzers RM491-huvudvärk och RM527:s mätta Playwright-flake under parallell last. Skälen och vad som
 gäller om en andra ändå behövs står i `apps/ci-runner/README.md`.
 
 **Aldrig mot ett publikt repo.** En self-hosted runner på en produktionsvärd förutsätter att
@@ -250,8 +252,9 @@ fork-PR:er inte kan trigga körningar. `esnil/bus-analyzer` är privat — det �
 Deploy och hälsokoll:
 
 ```bash
-./apps/ci-runner/deploy.sh     # bygg image PÅ VPS:en + starta
-./apps/ci-runner/health.sh     # container + agent + GitHubs bild av flottan
+./apps/ci-runner/deploy.sh          # bygg båda imagen PÅ VPS:en + starta båda
+./apps/ci-runner/deploy.sh --gate   # bara prose-runnern (rör inte ci-runner mitt i ett jobb)
+./apps/ci-runner/health.sh          # container + agent + GitHubs bild av flottan
 ```
 
 En bus-analyzer-körning som **köar** i stället för att bli röd betyder att ingen matchande runner

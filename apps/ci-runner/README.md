@@ -1,17 +1,25 @@
 # ci-runner — self-hosted GitHub Actions-runner för bus-analyzer
 
-**En** runner-container som kör bus-analyzers (`esnil/bus-analyzer`) CI-jobb på VPS:en.
+**En** full runner-container som kör bus-analyzers (`esnil/bus-analyzer`) CI-jobb på VPS:en,
+plus en liten **prose-runner** som bara tar docs-/prosa-PR:ernas gate (se nedan).
 Ingen webbtjänst: inga portar, ingen Traefik-label, ingen URL. Runnern long-pollar GitHub
 **utåt** och tar aldrig emot inkommande trafik.
 
 | | |
 |---|---|
-| Container | `ci-runner` |
-| Image | `bus-analyzer-runner:local` (byggs på VPS:en, finns i inget register) |
-| Nätverk | `ci-runner` (172.30.0.0/24) — **inte** `proxy` |
-| Resurstak | 3.0 av 4 vCPU, 4 GB av 7,7 GB RAM |
-| Labels | `e2e,ci2` (tar alla tre ci.yml-jobben) |
-| Namn i GitHub | `vps-ci-runner` (kräver `hostname:` i compose — `container_name` sätter den inte) |
+| | Full runner | Prose-runner (RM924) |
+|---|---|---|
+| Container | `ci-runner` | `ci-runner-gate` |
+| Image | `bus-analyzer-runner:local` (target `full`, ~5,4 GB) | `bus-analyzer-runner-gate:local` (target `gate`) |
+| Resurstak | 3.0 av 4 vCPU, 4 GB av 7,7 GB RAM | 1.0 vCPU, 2 GB |
+| Labels | `e2e,ci2,gate` (tar allt; `gate` som reserv) | `gate` (enbart — satt i compose, inte `.env`) |
+| Namn i GitHub | `vps-ci-runner` | `vps-ci-runner-gate` |
+
+Gemensamt: byggs på VPS:en och finns i inget register, nätverket `ci-runner` (172.30.0.0/24,
+**inte** `proxy`), namnen kräver `hostname:` i compose (`container_name` sätter det inte).
+
+| | |
+|---|---|
 | Katalog på VPS | `/opt/hosting/apps/ci-runner/` |
 
 Imagen och entrypointen **ägs av bus-analyzer-repot** (`../bus-analyzer/docker/runner/`) och
@@ -92,20 +100,53 @@ ssh deploy@217.154.83.127 'docker images bus-analyzer-runner --format "{{.Tag}}\
 `./apps/ci-runner/deploy.sh --no-build` startar om på nuvarande image — det man vill efter en
 ren `.env`-ändring (nya labels, ny PAT).
 
+## Prose-runnern (`gate`, bus-analyzer RM924)
+
+bus-analyzers `ci.yml` låter `backend` fråga efter labeln `gate` i stället för `ci2` när **varje**
+ändrad fil är prosa. Då köar en docs- eller ledger-PR inte bakom en full svit på den fulla runnern.
+`ci-runner-gate` bär bara `gate` och får därför bara `guard` (som flyter till valfri self-hosted
+Linux-runner) och prosa-`backend`, aldrig bridge, frontend/e2e eller hela backend-sviten. Imagen
+är Dockerfilens `gate`-target: runner-basen plus git, curl, jq, python3, uv och CPython 3.12.
+Ingen Node, Playwright, Rust eller kompilator.
+
+Den fulla runnern bär `gate` också (`RUNNER_LABELS=e2e,ci2,gate` i `.env`). Är den lilla nere
+körs docs-PR:en ändå, bara långsammare. Labeln måste stå i `.env`: en efemär runner registrerar
+om sig ur sin env före varje jobb, så en label som läggs till i GitHubs UI är borta efter ett jobb.
+
+Värdens version bor i `compose.yaml` som service `gate-runner`, inte som bus-analyzers
+`compose.gate.yaml`. Då delar den nätverk (och därmed brandvägg) med den fulla, och får fast namn.
+
+```bash
+./apps/ci-runner/deploy.sh --gate   # bygg + starta bara prose-runnern; rör inte ci-runner
+```
+
+`--gate` finns för att en vanlig `deploy.sh` kör `up -d` på båda, och ändrad env eller image
+återskapar `ci-runner`. Det dödar ett pågående jobb. Driftsätt den fulla när den är idle
+(`health.sh` visar `busy=`).
+
+**Kontrollera efter första prosa-PR:en** att `backend` landade på `vps-ci-runner-gate` (eller en
+annan `gate`-runner): `gh run view <id> --json jobs`.
+
 ## Hälsokoll
 
 ```bash
 ./apps/ci-runner/health.sh
 ```
 
-Kollar tre lager, för de fallerar var för sig: containern kör (`docker ps`), agenten är
+Kollar båda runnerna i tre lager, för de fallerar var för sig: containern kör (`docker ps`), agenten är
 registrerad (`Listening for Jobs` i loggen), och **GitHub håller med** (runners-API:et).
 
 Det tredje lagret är det som inte går att gissa sig till. En runner kan vara offline medan VPS:en
 mår perfekt — och då blir bus-analyzers pipeline inte **röd**, den **köar tyst**. En körning som
 aldrig startar är omöten, inte trasig; leta efter runnern, inte i diffen.
 
-## Varför exakt en runner
+## Varför exakt en FULL runner
+
+*(Prose-runnern ovan ändrar inte det här. Resonemanget gäller två runners som delar på e2e-
+och fullsvitslasten. `ci-runner-gate` tar bara ett jobb vars tyngsta steg, mypy, toppar på
+~475 MB (mätt 2026-09-25 i bus-analyzer). Taken summerar till 4.0 CPU och 6 GB, alltså alla
+kärnor, men ett tak är ingen reservation. Även om båda skenar samtidigt blir ~1,7 GB kvar åt
+produktionens ~310 MB.)*
 
 VPS:en har 4 vCPU, 7,7 GB RAM och **ingen swap**, delade med produktion. Två runners hade blivit
 2 kärnor styck — precis den maskin bus-analyzers gamla LENOVO-E-låda var, och vars huvudvärk
@@ -163,8 +204,11 @@ körs två åt gången på den här maskinen. Mät produktionens svarstider inna
 | Jobb dör med OOM / exit 137 | Slog i `mem_limit: 4g` | Höj taket **eller** sänk jobbets parallellitet — höj inte utan att räkna på produktionens marginal |
 | Ett jobb kan nå en produktionscontainer | Brandväggsreglerna saknas | `sudo systemctl status ci-runner-firewall` på VPS:en |
 | `image bus-analyzer-runner:local not found` | Imagen aldrig byggd på den här värden | `./apps/ci-runner/deploy.sh` |
+| `image bus-analyzer-runner-gate:local not found` | Gate-imagen aldrig byggd | `./apps/ci-runner/deploy.sh --gate` |
+| `deploy.sh` säger "saknar target 'gate'" | `BA_DIR` pekar på en bus-analyzer-commit före RM924 | Checka ut en commit med RM924 (`BA_DIR=<worktree>`) |
+| Prosa-PR:s `backend` köar | Ingen `gate`-runner online (och den fulla saknar `gate` i `.env`) | `health.sh`; lägg `gate` i `RUNNER_LABELS` → `deploy.sh --no-build` |
 
-Loggar: `ssh deploy@217.154.83.127 'docker logs --tail 50 ci-runner'`.
+Loggar: `ssh deploy@217.154.83.127 'docker logs --tail 50 ci-runner'` (resp. `ci-runner-gate`).
 Resursanvändning under ett jobb: `ssh deploy@217.154.83.127 'docker stats --no-stream'`.
 
 ## Avveckling
@@ -179,6 +223,6 @@ blir kvar. Rensa sedan om man vill:
 ```bash
 ssh deploy@217.154.83.127 '
   docker volume rm $(docker volume ls -q --filter name=ci-runner) ;
-  docker rmi $(docker images bus-analyzer-runner -q) ;
+  docker rmi $(docker images bus-analyzer-runner -q) $(docker images bus-analyzer-runner-gate -q) ;
   sudo systemctl disable --now ci-runner-firewall'
 ```

@@ -17,7 +17,7 @@ services:
   runner:
     image: bus-analyzer-runner:${RUNNER_IMAGE_TAG:-local}
     pull_policy: never
-    # Fast namn (i stället för upstreams `--scale`). En ANDRA runner läggs till som ett eget
+    # Fast namn (i stället för upstreams `--scale`). En ANDRA full runner läggs till som ett eget
     # service-block (se README § "Att lägga till en andra runner"), inte med --scale.
     container_name: ci-runner
     # `hostname` MÅSTE sättas separat — `container_name` sätter den inte. Entrypointen döper
@@ -67,6 +67,46 @@ services:
       - pw-cache:/home/runner/.cache/ms-playwright
       - toolcache:/opt/hostedtoolcache
 
+  # ── Den lilla prose-runnern (bus-analyzer RM924) ─────────────────────────────────────────
+  # Motsvarar bus-analyzers docker/runner/compose.gate.yaml, men med värdens tak, nätverk och
+  # namn. Imagen är Dockerfilens `gate`-target: git, curl, jq, python3, uv och CPython 3.12 —
+  # ingen Node, Playwright, Rust eller kompilator. Den bär ENBART labeln `gate`, så den får bara
+  # `guard` (som flyter till valfri self-hosted Linux-runner) och `backend` när VARJE ändrad fil
+  # är prosa. Aldrig bridge, frontend/e2e eller hela backend-sviten — de frågar efter ci2/e2e.
+  #
+  # Därför bryter den inte mot "exakt en runner" (README § Varför exakt en runner): skälet där är
+  # två FULLA runners som delar på e2e-lasten. Den här tar ett jobb vars tyngsta steg (mypy) toppar
+  # på ~475 MB (mätt 2026-09-25 i bus-analyzer). Taken summerar till 4.0 CPU / 6 GB — alla kärnor,
+  # men tak är tak, inte reservationer — och lämnar ~1,7 GB åt produktionens ~310 MB även om båda
+  # skenar samtidigt.
+  gate-runner:
+    image: bus-analyzer-runner-gate:${GATE_IMAGE_TAG:-local}
+    pull_policy: never
+    container_name: ci-runner-gate
+    # Samma skäl som ovan: utan fast hostname ett nytt namn i GitHubs lista per container.
+    # Blir `vps-ci-runner-gate`.
+    hostname: ci-runner-gate
+    restart: unless-stopped
+    # Bara GH_PAT (och prefixet) läses ur .env. `environment:` vinner över `env_file:`, så en
+    # .env skriven för den fulla runnern (RUNNER_LABELS=e2e,ci2,gate) kan inte göra den här till en.
+    env_file: .env
+    environment:
+      GH_REPO: ${GH_REPO:-esnil/bus-analyzer}
+      RUNNER_LABELS: gate
+      RUNNER_NAME_PREFIX: ${RUNNER_NAME_PREFIX:-vps}
+    cpus: 1.0
+    mem_limit: 2g
+    # SAMMA nätverk som den fulla runnern — det är det som gör att 05-ci-runner-firewall.sh:s
+    # regler mot 172.30.0.0/24 täcker även den här. Ett eget nätverk hade varit oinhägnat.
+    networks:
+      - ci
+    # Egna volymer, inte den fulla runnerns: uv-python seedas ur imagen vid första mount, och
+    # de två imagen är olika. Samma slängbara-cache-resonemang som ovan.
+    volumes:
+      - gate-uv-cache:/home/runner/.cache/uv
+      - gate-uv-python:/home/runner/.local/share/uv
+      - gate-toolcache:/opt/hostedtoolcache
+
 networks:
   # Eget nätverk, aldrig `proxy`: en CI-container ska inte kunna nå produktionscontainrarna.
   # FAST subnät därför att scripts/05-ci-runner-firewall.sh refererar det — ett dynamiskt
@@ -84,3 +124,6 @@ volumes:
   cargo-registry:
   pw-cache:
   toolcache:
+  gate-uv-cache:
+  gate-uv-python:
+  gate-toolcache:
