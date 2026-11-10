@@ -12,9 +12,14 @@ services:
       - "traefik.http.routers.status.tls.certresolver=letsencrypt"
       - "traefik.http.services.status.loadbalancer.server.port=80"
       - "traefik.http.routers.status.middlewares=status-auth@file"
+      # Containern sitter på TVÅ nätverk. Utan den här labeln väljer Traefik IP slumpvis vid varje
+      # omladdning av docker-providern, och den laddas om vid VARJE containerhändelse på värden (t.ex.
+      # CI-runnerns efemära varv). Hamnar den på monitoring-IP:n, som Traefik inte når, blir det
+      # 504 tills nästa omladdning.
+      - "traefik.docker.network=proxy"
 
   uptime-kuma:
-    image: louislam/uptime-kuma:1
+    image: louislam/uptime-kuma:2
     container_name: uptime-kuma
     restart: unless-stopped
     volumes:
@@ -28,6 +33,8 @@ services:
       - "traefik.http.routers.uptime.entrypoints=websecure"
       - "traefik.http.routers.uptime.tls.certresolver=letsencrypt"
       - "traefik.http.services.uptime.loadbalancer.server.port=3001"
+      # Samma skäl som för status ovan.
+      - "traefik.docker.network=proxy"
 
 volumes:
   uptime-kuma-data:

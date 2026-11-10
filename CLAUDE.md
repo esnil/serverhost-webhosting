@@ -187,7 +187,11 @@ labels:
   - "traefik.http.services.<app>.loadbalancer.server.port=<port>"
 ```
 
-Alla appar kopplas till det externa nätverket `proxy`.
+Alla appar kopplas till det externa nätverket `proxy`. **En container på fler nätverk än `proxy`
+måste ha `traefik.docker.network=proxy`.** Annars väljer Traefik backend-IP slumpvis vid varje
+omladdning av docker-providern, och providern laddas om vid varje containerhändelse på värden
+(CI-runnerns efemära varv räcker). Blir det fel IP ger det 504 tills nästa omladdning. Det var
+orsaken till hello.vps.encab.se:s intermittenta 504:or 2026-09–11, som syntes "när runnerna jobbar".
 
 ## CI/CD-mönster per app
 

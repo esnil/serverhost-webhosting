@@ -43,6 +43,9 @@ serversTransport:
 providers:
   docker:
     exposedByDefault: false
+    # Standardnätverk för backends på flera nätverk. Annars väljs IP slumpvis per omladdning,
+    # vilket ger intermittenta 504 (status/uptime-kuma 2026-09–11).
+    network: proxy
   file:
     directory: /etc/traefik/dynamic
     watch: true
