@@ -91,6 +91,12 @@ $SSH "mkdir -p '$REMOTE_DIR'"
 scp -q "${SSH_OPTS[@]}" "$SCRIPT_DIR/compose.yaml" "${VPS_USER}@${VPS_HOST}:$REMOTE_DIR/compose.yaml"
 scp -q "${SSH_OPTS[@]}" "$SCRIPT_DIR/.env" "${VPS_USER}@${VPS_HOST}:$REMOTE_DIR/.env"
 $SSH "chmod 600 '$REMOTE_DIR/.env'"
+# Övervakningen (check.sh via cron → Uptime Kuma → Telegram). Crontab-raden skrivs om idempotent,
+# så en ändrad rad här slår igenom vid nästa deploy. Push-URL:erna (monitor.env) lämnas orörda:
+# de finns bara på servern.
+scp -q "${SSH_OPTS[@]}" "$SCRIPT_DIR/check.sh" "${VPS_USER}@${VPS_HOST}:$REMOTE_DIR/check.sh"
+$SSH "chmod 755 '$REMOTE_DIR/check.sh' && { crontab -l 2>/dev/null | grep -v 'ci-runner/check.sh'; \
+      echo '*/5 * * * * $REMOTE_DIR/check.sh --push > $REMOTE_DIR/check.last 2>&1'; } | crontab -"
 
 # --- Bygg på VPS:en -------------------------------------------------------------------------
 if [ "$BUILD" = "1" ]; then

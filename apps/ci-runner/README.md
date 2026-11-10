@@ -133,10 +133,71 @@ annan `gate`-runner): `gh run view <id> --json jobs`.
 ./apps/ci-runner/health.sh
 ```
 
-Kollar båda runnerna i tre lager, för de fallerar var för sig: containern kör (`docker ps`), agenten är
-registrerad (`Listening for Jobs` i loggen), och **GitHub håller med** (runners-API:et).
+Kollarna bor i `check.sh`, som körs **på VPS:en**: `health.sh` pipar den lokala kopian över ssh,
+och cron kör den installerade kopian var 5:e minut med `--push`. Den svarar på två frågor:
 
-Det tredje lagret är det som inte går att gissa sig till. En runner kan vara offline medan VPS:en
+**HÄLSA** — tar runnerna jobb just nu?
+- containern kör (`docker inspect`);
+- ingen **omstartsloop**: fler än 15 starter på 10 min. `RestartCount` duger inte som signal,
+  eftersom den stiger med flit (runnerna är efemära, ett containervarv per jobb);
+- **GitHub håller med** (runners-API:et säger `online`);
+- GitHub har inte uttryckligen **vägrat versionen** (`is deprecated and cannot receive messages`
+  i loggen).
+
+**VERSION** — måste imagen byggas om snart? Se § Runnerversionen nedan.
+
+### Larm via Telegram
+
+Två **Push**-monitorer i Uptime Kuma (`uptime.vps.encab.se`), med samma Telegram-notifiering
+som övriga monitorer. `check.sh --push` skickar `up`/`down` med felet som meddelande. Tystnar
+cron, eller dör VPS:en, går HÄLSA-monitorn ner av sig själv när hjärtslaget uteblir.
+
+| Monitor | Heartbeat | Larmar |
+|---|---|---|
+| `CI-runner` | 600 s | Två körningar i rad med fel (deploys och efemära varv ger glapp på sekunder). En versionsvägran larmas direkt |
+| `CI-runner version` | 600 s | Ombyggnad behövs, med datumet då GitHub troligen börjar vägra |
+
+Monitorerna är separata eftersom Uptime Kuma bara larmar vid **övergång** till down. En
+versionsvarning som ligger röd i veckor får inte tysta ett akut hälsolarm under tiden.
+
+Push-URL:erna ligger i `/opt/hosting/apps/ci-runner/monitor.env` (chmod 600, finns **bara på
+servern**). De ligger inte i `.env`, eftersom `.env` är `env_file` för containrarna: jobbkod som
+ser push-URL:en skulle kunna förfalska "allt grönt".
+
+```bash
+UPTIME_PUSH_HEALTH=https://uptime.vps.encab.se/api/push/<token>
+UPTIME_PUSH_VERSION=https://uptime.vps.encab.se/api/push/<token>
+```
+
+`deploy.sh` kopierar `check.sh` och skriver om crontab-raden idempotent (`crontab -l` som
+`deploy`). Senaste körningens utskrift finns i `/opt/hosting/apps/ci-runner/check.last`.
+
+### Runnerversionen
+
+Entrypointen startar runnern med `--disableupdate`, så den kan inte uppdatera sig själv. Versionen
+är pinnad i bus-analyzers `docker/runner/Dockerfile` (`RUNNER_IMAGE_TAG`, en digest). När GitHub
+slutar ta emot versionen går hela flottan ner: varje container registrerar sig, får
+`Runner version vX is deprecated and cannot receive messages`, avslutar med exit 0 och startas
+om, ungefär var 13:e sekund. GitHub visar runnerna som offline och CI köar. Det hände
+2026-11-05 med 2.336.0, efter cirka 6 600 varv innan någon märkte det.
+
+Regeln, härledd ur det tillfället: när det finns en release **två minor över** den vi kör (2.338.0
+mot 2.336) börjar en **30-dagarsklocka**. 2.338.0 släpptes 2026-10-06 och 2.336.0 vägrades
+2026-11-05. Regeln är härledd, inte dokumenterad av GitHub, och därför finns vägran-kollen i HÄLSA
+kvar som backstopp. `CI-runner version` larmar när klockan startar, vilket ger 30 dagars
+framförhållning.
+
+Åtgärd: flytta `RUNNER_IMAGE_TAG` i bus-analyzers Dockerfile till senaste
+`ghcr.io/actions/actions-runner`-digest, merga och kör `./apps/ci-runner/deploy.sh`.
+
+`CI-runner version` larmar också 14 dagar innan `GH_PAT` går ut. GitHub skickar utgångsdatumet i
+svarshuvudet `github-authentication-token-expiration`. En utgången PAT gör att registreringen
+faller, och då går flottan ner på samma sätt som vid en versionsvägran. Åtgärd: ny PAT i
+`apps/ci-runner/.env` och sedan `./apps/ci-runner/deploy.sh --no-build`.
+
+### Varför GitHub-lagret
+
+En runner kan vara offline medan VPS:en
 mår perfekt — och då blir bus-analyzers pipeline inte **röd**, den **köar tyst**. En körning som
 aldrig startar är omöten, inte trasig; leta efter runnern, inte i diffen.
 
@@ -197,6 +258,7 @@ körs två åt gången på den här maskinen. Mät produktionens svarstider inna
 | Symptom | Sannolik orsak | Åtgärd |
 |---|---|---|
 | Körningar köar, ingen startar | Ingen matchande runner online | `./apps/ci-runner/health.sh` |
+| `Runner version vX is deprecated and cannot receive messages`, ett varv var ~13:e s | GitHub vägrar den pinnade runnerversionen | Se § Runnerversionen: ny digest i bus-analyzers Dockerfile → `deploy.sh` |
 | Containern `Restarting` i loop | Utgången/återkallad PAT (registreringen faller) | `docker logs ci-runner`; ny PAT i `.env` → `deploy.sh --no-build` |
 | `stale runner config found …` i loggen | Container dödad mitt i ett jobb | Inget — entrypointen städar själv (RM497) |
 | `docker ps` säger Up, GitHub säger offline | Agenten tappade uppkopplingen | `ssh … 'docker restart ci-runner'` |

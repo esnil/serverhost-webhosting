@@ -63,6 +63,7 @@ serverhost-webhosting/
       compose.yaml
       deploy.sh
       health.sh
+      check.sh             # hälsa + versionskoll; körs på VPS:en (health.sh och cron → Uptime Kuma)
       README.md
 ```
 
@@ -254,8 +255,13 @@ Deploy och hälsokoll:
 ```bash
 ./apps/ci-runner/deploy.sh          # bygg båda imagen PÅ VPS:en + starta båda
 ./apps/ci-runner/deploy.sh --gate   # bara prose-runnern (rör inte ci-runner mitt i ett jobb)
-./apps/ci-runner/health.sh          # container + agent + GitHubs bild av flottan
+./apps/ci-runner/health.sh          # container + omstartsloop + GitHubs bild + runnerversion
 ```
+
+`check.sh` körs också av cron på VPS:en var 5:e minut och larmar via Uptime Kuma-push → Telegram
+(monitorerna `CI-runner` och `CI-runner version`). Runnern startas med `--disableupdate`, så den
+**måste byggas om** när GitHub slutar ta emot versionen: versionsmonitorn larmar cirka 30 dagar
+innan. Se `apps/ci-runner/README.md` § Runnerversionen.
 
 En bus-analyzer-körning som **köar** i stället för att bli röd betyder att ingen matchande runner
 är online — leta i `health.sh`, inte i diffen.
